@@ -28,15 +28,18 @@ import os
 import platform
 import hashlib
 import json
+import re
 import argparse
 import base64
 import subprocess
 import tempfile
 import logging
 import time
+from contextlib import contextmanager
 import urllib.parse
 import urllib.request
 import shutil
+import sys
 from pathlib import Path
 from typing import (
     Dict,
@@ -707,6 +710,46 @@ class MineruParser(Parser):
         """Initialize MineruParser"""
         super().__init__()
 
+    @staticmethod
+    def _resolve_mineru_executable() -> str:
+        """Resolve mineru executable with virtualenv-aware fallback on Windows."""
+        mineru_cmd = shutil.which("mineru")
+        if mineru_cmd:
+            return mineru_cmd
+
+        # Fallback to current interpreter's Scripts directory (Windows venv).
+        scripts_dir = Path(sys.executable).parent
+        exe_candidate = scripts_dir / "mineru.exe"
+        if exe_candidate.exists():
+            return str(exe_candidate)
+
+        # Fallback for non-Windows environments.
+        candidate = scripts_dir / "mineru"
+        if candidate.exists():
+            return str(candidate)
+
+        return "mineru"
+
+    @staticmethod
+    def _has_mineru_output(output_dir: Union[str, Path], input_path: Union[str, Path]) -> bool:
+        """Check whether MinerU produced expected parse artifacts."""
+        out_dir = Path(output_dir)
+        if not out_dir.exists():
+            return False
+
+        stem = Path(input_path).stem
+        expected_json = f"{stem}_content_list.json"
+        expected_md = f"{stem}.md"
+
+        # Common outputs from MinerU are placed in nested backend/method subdirs.
+        for p in out_dir.rglob("*"):
+            if not p.is_file():
+                continue
+            name = p.name
+            if name == expected_json or name == expected_md:
+                return True
+        return False
+
     @classmethod
     def _run_mineru_command(
         cls,
@@ -746,7 +789,7 @@ class MineruParser(Parser):
             **kwargs: Additional parameters for subprocess (e.g., env)
         """
         cmd = [
-            "mineru",
+            cls._resolve_mineru_executable(),
             "-p",
             str(input_path),
             "-o",
@@ -930,11 +973,26 @@ class MineruParser(Parser):
             stdout_thread.join(timeout=5)
             stderr_thread.join(timeout=5)
 
-            if return_code != 0 or error_lines:
+            has_output = cls._has_mineru_output(output_dir=output_dir, input_path=input_path)
+
+            if return_code != 0:
                 cls.logger.info("[MinerU] Command executed failed")
                 raise MineruExecutionError(return_code, error_lines)
-            else:
-                cls.logger.info("[MinerU] Command executed successfully")
+
+            # return_code == 0: tolerate transient warnings/errors in logs
+            # (e.g., model download timeout with resume) as long as outputs exist.
+            if not has_output:
+                cls.logger.info("[MinerU] Command exited successfully but no parse output was found")
+                raise MineruExecutionError(
+                    return_code,
+                    ["MinerU returned code 0 but no markdown/content_list output files were generated."],
+                )
+
+            if error_lines:
+                cls.logger.warning(
+                    "[MinerU] Command exited 0 with logged errors/warnings; continuing because output files exist"
+                )
+            cls.logger.info("[MinerU] Command executed successfully")
 
         except MineruExecutionError:
             raise
@@ -1436,7 +1494,9 @@ class MineruParser(Parser):
             if _IS_WINDOWS:
                 subprocess_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-            result = subprocess.run(["mineru", "--version"], **subprocess_kwargs)
+            result = subprocess.run(
+                [self._resolve_mineru_executable(), "--version"], **subprocess_kwargs
+            )
             self.logger.debug(f"MinerU version: {result.stdout.strip()}")
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -1444,6 +1504,179 @@ class MineruParser(Parser):
                 "MinerU 2.0 is not properly installed. "
                 "Please install it using: pip install -U 'mineru[core]'"
             )
+            return False
+
+
+class SimpleDocxParser(Parser):
+    """Lightweight DOCX parser using python-docx (text-only)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def parse_pdf(
+        self,
+        pdf_path: Union[str, Path],
+        output_dir: Optional[str] = None,
+        method: str = "auto",
+        lang: Optional[str] = None,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "simple_docx parser only supports .docx input, not PDF."
+        )
+
+    def parse_office_doc(
+        self,
+        doc_path: Union[str, Path],
+        output_dir: Optional[str] = None,
+        lang: Optional[str] = None,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        doc_path = Path(doc_path)
+        if not doc_path.exists():
+            raise FileNotFoundError(f"DOCX file does not exist: {doc_path}")
+
+        if doc_path.suffix.lower() != ".docx":
+            raise ValueError(
+                f"simple_docx supports only .docx files. Got: {doc_path.suffix}"
+            )
+
+        try:
+            from docx import Document
+        except ImportError as exc:
+            raise ImportError(
+                "simple_docx parser requires python-docx. "
+                "Install with: .\\.venv\\Scripts\\python.exe -m pip install python-docx"
+            ) from exc
+
+        if output_dir:
+            output_dir_path = Path(output_dir)
+        else:
+            output_dir_path = doc_path.parent / "output"
+        output_dir_path.mkdir(parents=True, exist_ok=True)
+        markdown_path = output_dir_path / f"{doc_path.stem}.md"
+
+        document = Document(str(doc_path))
+        raw_max_chars = kwargs.get("max_chars")
+        raw_max_paragraphs = kwargs.get("max_paragraphs")
+        max_chars = int(raw_max_chars) if raw_max_chars not in (None, "", 0, "0") else None
+        max_paragraphs = (
+            int(raw_max_paragraphs)
+            if raw_max_paragraphs not in (None, "", 0, "0")
+            else None
+        )
+
+        paragraph_lines: List[str] = []
+        table_markdowns: List[str] = []
+        paragraph_count = 0
+        table_count = 0
+
+        for para in document.paragraphs:
+            text = para.text.strip()
+            if not text:
+                continue
+            style_name = ""
+            try:
+                style_name = para.style.name or ""
+            except Exception:
+                style_name = ""
+
+            if style_name.lower().startswith("heading"):
+                match = re.search(r"(\d+)", style_name)
+                level = int(match.group(1)) if match else 2
+                level = max(1, min(level, 6))
+                markdown_line = f"{'#' * level} {text}"
+            else:
+                markdown_line = text
+
+            paragraph_lines.append(markdown_line)
+            paragraph_count += 1
+            if max_paragraphs is not None and paragraph_count >= max_paragraphs:
+                break
+
+        for idx, table in enumerate(document.tables, start=1):
+            rows: List[List[str]] = []
+            max_cols = 0
+            for row in table.rows:
+                cells = [cell.text.replace("\n", " ").strip() for cell in row.cells]
+                max_cols = max(max_cols, len(cells))
+                rows.append(cells)
+
+            if not rows or max_cols == 0:
+                continue
+
+            normalized_rows: List[List[str]] = []
+            for row in rows:
+                normalized_rows.append(row + [""] * (max_cols - len(row)))
+
+            header = normalized_rows[0]
+            separator = ["---"] * max_cols
+            body_rows = normalized_rows[1:]
+
+            table_lines = [f"Table {idx}:", f"| {' | '.join(header)} |", f"| {' | '.join(separator)} |"]
+            for body_row in body_rows:
+                table_lines.append(f"| {' | '.join(body_row)} |")
+
+            table_markdowns.append("\n".join(table_lines))
+            table_count += 1
+
+        markdown_parts = [f"# Source: {doc_path.name}", "", "## Paragraphs"]
+        if paragraph_lines:
+            markdown_parts.extend(paragraph_lines)
+        else:
+            markdown_parts.append("(No paragraph text extracted)")
+
+        markdown_parts.extend(["", "## Tables"])
+        if table_markdowns:
+            markdown_parts.extend(table_markdowns)
+        else:
+            markdown_parts.append("(No tables extracted)")
+
+        markdown_content = "\n".join(markdown_parts).strip() + "\n"
+        if max_chars is not None and max_chars > 0 and len(markdown_content) > max_chars:
+            markdown_content = markdown_content[:max_chars].rstrip() + "\n\n[TRUNCATED_BY_MAX_CHARS]\n"
+        markdown_path.write_text(markdown_content, encoding="utf-8")
+
+        self.logger.info("Parser: simple_docx")
+        self.logger.info(f"Input file: {doc_path.resolve()}")
+        self.logger.info(f"Output markdown path: {markdown_path.resolve()}")
+        self.logger.info(f"Extracted paragraphs: {paragraph_count}")
+        self.logger.info(f"Extracted tables: {table_count}")
+        if max_paragraphs is not None:
+            self.logger.info(f"Applied max_paragraphs: {max_paragraphs}")
+        if max_chars is not None:
+            self.logger.info(f"Applied max_chars: {max_chars}")
+
+        content_list: List[Dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": markdown_content,
+                "page_idx": 0,
+            }
+        ]
+        return content_list
+
+    def parse_document(
+        self,
+        file_path: Union[str, Path],
+        method: str = "auto",
+        output_dir: Optional[str] = None,
+        lang: Optional[str] = None,
+        **kwargs,
+    ) -> List[Dict[str, Any]]:
+        file_path = Path(file_path)
+        if file_path.suffix.lower() == ".docx":
+            return self.parse_office_doc(file_path, output_dir, lang, **kwargs)
+        raise ValueError(
+            f"simple_docx supports only .docx. Got: {file_path.suffix}"
+        )
+
+    def check_installation(self) -> bool:
+        try:
+            from docx import Document  # noqa: F401
+
+            return True
+        except Exception:
             return False
 
 
@@ -1461,6 +1694,111 @@ class DoclingParser(Parser):
     def __init__(self) -> None:
         """Initialize DoclingParser"""
         super().__init__()
+
+    @staticmethod
+    def _resolve_docling_executable() -> str:
+        """Resolve docling executable with virtualenv-aware fallback on Windows."""
+        docling_cmd = shutil.which("docling")
+        if docling_cmd:
+            return docling_cmd
+
+        scripts_dir = Path(sys.executable).parent
+        exe_candidate = scripts_dir / "docling.exe"
+        if exe_candidate.exists():
+            return str(exe_candidate)
+
+        candidate = scripts_dir / "docling"
+        if candidate.exists():
+            return str(candidate)
+
+        return "docling"
+
+    @staticmethod
+    def _build_docling_env(custom_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """Build a writable runtime env for Docling/HuggingFace on Windows."""
+        env = os.environ.copy()
+        if custom_env:
+            env.update(custom_env)
+
+        if custom_env:
+            base_tmp = (
+                custom_env.get("TMP")
+                or custom_env.get("TEMP")
+                or str((Path.cwd() / ".tmp").resolve())
+            )
+        else:
+            # Force workspace-local temp/cache by default to avoid Windows
+            # privilege issues in system TEMP locations.
+            base_tmp = str((Path.cwd() / ".tmp").resolve())
+        base_tmp_path = Path(base_tmp)
+        base_tmp_path.mkdir(parents=True, exist_ok=True)
+
+        hf_home = base_tmp_path / "hf"
+        hf_cache = hf_home / "hub"
+        xdg_cache = base_tmp_path / "xdg"
+        torch_home = base_tmp_path / "torch"
+        for p in [hf_home, hf_cache, xdg_cache, torch_home]:
+            p.mkdir(parents=True, exist_ok=True)
+
+        env["TMP"] = str(base_tmp_path)
+        env["TEMP"] = str(base_tmp_path)
+        env["HF_HOME"] = str(hf_home)
+        env["HUGGINGFACE_HUB_CACHE"] = str(hf_cache)
+        env["XDG_CACHE_HOME"] = str(xdg_cache)
+        env["TORCH_HOME"] = str(torch_home)
+        env["HF_HUB_DISABLE_SYMLINKS"] = "1"
+        env["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+        return env
+
+    @staticmethod
+    @contextmanager
+    def _temporary_env(updated_env: Dict[str, str]):
+        """Temporarily override process environment variables."""
+        old_values: Dict[str, Optional[str]] = {}
+        for key, value in updated_env.items():
+            old_values[key] = os.environ.get(key)
+            os.environ[key] = value
+        try:
+            yield
+        finally:
+            for key, old_value in old_values.items():
+                if old_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = old_value
+
+    @staticmethod
+    def _patch_hf_symlink_for_windows() -> None:
+        """Patch huggingface_hub symlink creation to copy files on WinError 1314."""
+        if not _IS_WINDOWS:
+            return
+        try:
+            import huggingface_hub.file_download as hf_fd
+        except Exception:
+            return
+
+        if getattr(hf_fd, "_raganything_symlink_patch_applied", False):
+            return
+
+        original_create_symlink = hf_fd._create_symlink
+
+        def _safe_create_symlink(src_rel_or_abs, abs_dst, new_blob=False):
+            try:
+                return original_create_symlink(src_rel_or_abs, abs_dst, new_blob=new_blob)
+            except OSError as e:
+                if getattr(e, "winerror", None) != 1314:
+                    raise
+                # Fallback: copy the file instead of creating a symlink.
+                dst_path = Path(abs_dst)
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+                src_path = Path(src_rel_or_abs)
+                if not src_path.is_absolute():
+                    src_path = (dst_path.parent / src_path).resolve()
+                shutil.copy2(src_path, dst_path)
+                return None
+
+        hf_fd._create_symlink = _safe_create_symlink
+        hf_fd._raganything_symlink_patch_applied = True
 
     def parse_pdf(
         self,
@@ -1499,20 +1837,77 @@ class DoclingParser(Parser):
                 base_output_dir = pdf_path.parent / "docling_output"
 
             base_output_dir.mkdir(parents=True, exist_ok=True)
+            custom_env = kwargs.get("env")
+            docling_env = self._build_docling_env(custom_env)
 
-            # Run docling command
-            self._run_docling_command(
-                input_path=pdf_path,
-                output_dir=base_output_dir,
-                file_stem=name_without_suff,
-                **kwargs,
-            )
+            # Prefer in-process Docling API (more reliable than CLI PATH checks on Windows).
+            try:
+                file_subdir = base_output_dir / name_without_suff / "docling"
+                file_subdir.mkdir(parents=True, exist_ok=True)
+                md_file = file_subdir / f"{name_without_suff}.md"
+                content_list_file = file_subdir / f"{name_without_suff}_content_list.json"
 
-            # Read the generated output files
-            content_list, _ = self._read_output_files(
-                base_output_dir, name_without_suff
-            )
-            return content_list
+                with self._temporary_env(docling_env):
+                    self._patch_hf_symlink_for_windows()
+                    from docling.document_converter import DocumentConverter
+                    from docling.datamodel.base_models import ConversionStatus
+                    import pypdfium2 as pdfium
+
+                    total_pages = len(pdfium.PdfDocument(str(pdf_path)))
+                    converter = DocumentConverter()
+                    markdown_parts: List[str] = []
+                    content_list: List[Dict[str, Any]] = []
+
+                    for page_num in range(1, total_pages + 1):
+                        conv_res = converter.convert(
+                            str(pdf_path),
+                            raises_on_error=False,
+                            page_range=(page_num, page_num),
+                        )
+                        status = getattr(conv_res, "status", None)
+                        if status not in (
+                            ConversionStatus.SUCCESS,
+                            ConversionStatus.PARTIAL_SUCCESS,
+                        ):
+                            continue
+
+                        doc = getattr(conv_res, "document", None)
+                        if doc is None:
+                            continue
+
+                        page_md = ""
+                        if hasattr(doc, "export_to_markdown"):
+                            page_md = doc.export_to_markdown() or ""
+                        page_text = page_md.strip()
+                        if not page_text and hasattr(doc, "export_to_text"):
+                            page_text = (doc.export_to_text() or "").strip()
+
+                        if not page_text:
+                            continue
+
+                        content_list.append(
+                            {
+                                "type": "text",
+                                "text": page_text,
+                                "page_idx": page_num - 1,
+                            }
+                        )
+                        markdown_parts.append(f"<!-- page {page_num} -->\n{page_text}")
+
+                if content_list:
+                    md_file.write_text("\n\n".join(markdown_parts), encoding="utf-8")
+                    with open(content_list_file, "w", encoding="utf-8") as f:
+                        json.dump(content_list, f, ensure_ascii=False, indent=2)
+                    self.logger.info(
+                        "Docling API parsing completed: %d pages extracted from %d pages",
+                        len(content_list),
+                        total_pages,
+                    )
+                    return content_list
+
+                raise RuntimeError("Docling API returned no extractable text blocks")
+            except Exception as api_exc:
+                raise RuntimeError(f"Docling API parsing failed: {api_exc}") from api_exc
 
         except Exception as e:
             self.logger.error(f"Error in parse_pdf: {str(e)}")
@@ -1600,7 +1995,7 @@ class DoclingParser(Parser):
         file_output_dir.mkdir(parents=True, exist_ok=True)
 
         cmd = [
-            "docling",
+            self._resolve_docling_executable(),
             "--output",
             str(file_output_dir),
             "--to",
@@ -1625,10 +2020,7 @@ class DoclingParser(Parser):
 
         try:
             # Prepare subprocess parameters to hide console window on Windows
-            env = None
-            if custom_env:
-                env = os.environ.copy()
-                env.update(custom_env)
+            env = self._build_docling_env(custom_env)
 
             docling_subprocess_kwargs = {
                 "capture_output": True,
@@ -1944,8 +2336,30 @@ class DoclingParser(Parser):
         Returns:
             bool: True if installation is valid, False otherwise
         """
+        # Primary check: Python import path requested by integration.
+        # Ensure Docling/HF cache env points to writable workspace paths
+        # before importing docling/huggingface modules.
+        docling_env = self._build_docling_env(None)
+        for key in [
+            "TMP",
+            "TEMP",
+            "HF_HOME",
+            "HUGGINGFACE_HUB_CACHE",
+            "XDG_CACHE_HOME",
+            "TORCH_HOME",
+            "HF_HUB_DISABLE_SYMLINKS",
+            "HF_HUB_DISABLE_SYMLINKS_WARNING",
+        ]:
+            os.environ[key] = docling_env[key]
         try:
-            # Prepare subprocess parameters to hide console window on Windows
+            from docling.document_converter import DocumentConverter  # noqa: F401
+
+            return True
+        except Exception as import_exc:
+            self.logger.debug(f"Docling import check failed: {import_exc}")
+
+        # Fallback: CLI availability check.
+        try:
             subprocess_kwargs = {
                 "capture_output": True,
                 "text": True,
@@ -1953,12 +2367,12 @@ class DoclingParser(Parser):
                 "encoding": "utf-8",
                 "errors": "ignore",
             }
-
-            # Hide console window on Windows
             if _IS_WINDOWS:
                 subprocess_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-            result = subprocess.run(["docling", "--version"], **subprocess_kwargs)
+            result = subprocess.run(
+                [self._resolve_docling_executable(), "--version"], **subprocess_kwargs
+            )
             self.logger.debug(f"Docling version: {result.stdout.strip()}")
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
@@ -2355,7 +2769,7 @@ def register_parser(name: str, parser_class: type) -> None:
         raise TypeError(
             f"parser_class must be a subclass of Parser, got {parser_class!r}"
         )
-    _BUILTIN_NAMES = {"mineru", "docling", "paddleocr"}
+    _BUILTIN_NAMES = {"mineru", "docling", "paddleocr", "simple_docx"}
     if normalized_name in _BUILTIN_NAMES:
         raise ValueError(
             f"Cannot override built-in parser '{normalized_name}'. "
@@ -2396,13 +2810,14 @@ def list_parsers() -> Dict[str, str]:
         "mineru": "MineruParser",
         "docling": "DoclingParser",
         "paddleocr": "PaddleOCRParser",
+        "simple_docx": "SimpleDocxParser",
     }
     for name, cls in _CUSTOM_PARSERS.items():
         result[name] = cls.__name__
     return result
 
 
-SUPPORTED_PARSERS = ("mineru", "docling", "paddleocr")
+SUPPORTED_PARSERS = ("mineru", "docling", "paddleocr", "simple_docx")
 
 
 def get_supported_parsers() -> tuple:
@@ -2433,6 +2848,8 @@ def get_parser(parser_type: str) -> Parser:
         return DoclingParser()
     if parser_name == "paddleocr":
         return PaddleOCRParser()
+    if parser_name == "simple_docx":
+        return SimpleDocxParser()
     # Check custom parser registry
     if parser_name in _CUSTOM_PARSERS:
         return _CUSTOM_PARSERS[parser_name]()
@@ -2509,7 +2926,7 @@ def main():
         "--parser",
         default="mineru",
         help=(
-            "Parser selection. Built-ins: mineru, docling, paddleocr. "
+            "Parser selection. Built-ins: mineru, docling, paddleocr, simple_docx. "
             "Custom parsers registered via register_parser() in the same "
             "Python process are also accepted when you integrate RAGAnything "
             "as a library. The standalone CLI itself only sees parsers that "
