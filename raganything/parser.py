@@ -572,7 +572,6 @@ class Parser:
         Returns:
             Text with ReportLab markup
         """
-        import re
 
         # Escape special characters for ReportLab
         text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -731,7 +730,9 @@ class MineruParser(Parser):
         return "mineru"
 
     @staticmethod
-    def _has_mineru_output(output_dir: Union[str, Path], input_path: Union[str, Path]) -> bool:
+    def _has_mineru_output(
+        output_dir: Union[str, Path], input_path: Union[str, Path]
+    ) -> bool:
         """Check whether MinerU produced expected parse artifacts."""
         out_dir = Path(output_dir)
         if not out_dir.exists():
@@ -973,7 +974,9 @@ class MineruParser(Parser):
             stdout_thread.join(timeout=5)
             stderr_thread.join(timeout=5)
 
-            has_output = cls._has_mineru_output(output_dir=output_dir, input_path=input_path)
+            has_output = cls._has_mineru_output(
+                output_dir=output_dir, input_path=input_path
+            )
 
             if return_code != 0:
                 cls.logger.info("[MinerU] Command executed failed")
@@ -982,10 +985,14 @@ class MineruParser(Parser):
             # return_code == 0: tolerate transient warnings/errors in logs
             # (e.g., model download timeout with resume) as long as outputs exist.
             if not has_output:
-                cls.logger.info("[MinerU] Command exited successfully but no parse output was found")
+                cls.logger.info(
+                    "[MinerU] Command exited successfully but no parse output was found"
+                )
                 raise MineruExecutionError(
                     return_code,
-                    ["MinerU returned code 0 but no markdown/content_list output files were generated."],
+                    [
+                        "MinerU returned code 0 but no markdown/content_list output files were generated."
+                    ],
                 )
 
             if error_lines:
@@ -1508,10 +1515,45 @@ class MineruParser(Parser):
 
 
 class SimpleDocxParser(Parser):
-    """Lightweight DOCX parser using python-docx (text-only)."""
+    """Docling-powered parser for .docx files (optimized for text and structural markdown)."""
 
     def __init__(self) -> None:
         super().__init__()
+
+    def _setup_docling_env(self) -> None:
+        """Robust Environment Isolation for Windows."""
+        base_tmp_path = (Path.cwd() / ".tmp" / "hf").resolve()
+        os.makedirs(base_tmp_path, exist_ok=True)
+
+        # Set environment variables globally for the session
+        os.environ["HF_HOME"] = str(base_tmp_path)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(base_tmp_path)
+        os.environ["XDG_CACHE_HOME"] = str(base_tmp_path)
+        os.environ["TORCH_HOME"] = str(base_tmp_path)
+        os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+    def _smart_truncate(self, text: str, max_chars: int) -> str:
+        """Smart Truncation Logic to preserve Markdown structural integrity."""
+        if max_chars <= 0 or len(text) <= max_chars:
+            return text
+
+        truncated = text[:max_chars]
+
+        # Check if we are inside a Markdown table (e.g., between | characters)
+        last_newline_idx = truncated.rfind("\n")
+        current_line_start = last_newline_idx + 1 if last_newline_idx != -1 else 0
+        current_line_so_far = truncated[current_line_start:]
+
+        if "|" in current_line_so_far:
+            # We are likely truncating inside a table row. Find the end of this row.
+            end_of_row_idx = text.find("\n", max_chars)
+            if end_of_row_idx != -1:
+                truncated = text[:end_of_row_idx]
+            else:
+                truncated = text
+
+        return truncated + "\n\n[CONTENT_TRUNCATED_DUE_TO_LIMIT]\n"
 
     def parse_pdf(
         self,
@@ -1522,7 +1564,7 @@ class SimpleDocxParser(Parser):
         **kwargs,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError(
-            "simple_docx parser only supports .docx input, not PDF."
+            "simple_docx parser is explicitly optimized for .docx input. Please use DoclingParser for PDFs."
         )
 
     def parse_office_doc(
@@ -1541,13 +1583,18 @@ class SimpleDocxParser(Parser):
                 f"simple_docx supports only .docx files. Got: {doc_path.suffix}"
             )
 
+        # 1. Environment Isolation
+        self._setup_docling_env()
+
+        # 2. Strategic Lazy Loading & Dependency Checks
         try:
-            from docx import Document
+            from docling.document_converter import DocumentConverter, WordFormatOption
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.datamodel.base_models import InputFormat
         except ImportError as exc:
-            raise ImportError(
-                "simple_docx parser requires python-docx. "
-                "Install with: .\\.venv\\Scripts\\python.exe -m pip install python-docx"
-            ) from exc
+            msg = "Failed to import docling. Please run: pip install docling torch --index-url https://download.pytorch.org/whl/cpu"
+            self.logger.error(msg)
+            raise ImportError(msg) from exc
 
         if output_dir:
             output_dir_path = Path(output_dir)
@@ -1556,105 +1603,69 @@ class SimpleDocxParser(Parser):
         output_dir_path.mkdir(parents=True, exist_ok=True)
         markdown_path = output_dir_path / f"{doc_path.stem}.md"
 
-        document = Document(str(doc_path))
         raw_max_chars = kwargs.get("max_chars")
-        raw_max_paragraphs = kwargs.get("max_paragraphs")
-        max_chars = int(raw_max_chars) if raw_max_chars not in (None, "", 0, "0") else None
-        max_paragraphs = (
-            int(raw_max_paragraphs)
-            if raw_max_paragraphs not in (None, "", 0, "0")
-            else None
+        max_chars = (
+            int(raw_max_chars) if raw_max_chars not in (None, "", 0, "0") else None
         )
 
-        paragraph_lines: List[str] = []
-        table_markdowns: List[str] = []
-        paragraph_count = 0
-        table_count = 0
+        try:
+            # 3. Enhanced Docling Configuration (CPU Optimization)
+            # Dựa theo yêu cầu, bật lại xử lý ảnh và OCR
+            pipeline_options = PdfPipelineOptions()
+            pipeline_options.do_ocr = True  # Đã bật lại OCR
+            if hasattr(pipeline_options, "do_chart_resampling"):
+                pipeline_options.do_chart_resampling = True
+            pipeline_options.generate_page_images = True  # Đã bật trích xuất ảnh trang
+            pipeline_options.generate_picture_images = True  # Đã bật trích xuất ảnh con
 
-        for para in document.paragraphs:
-            text = para.text.strip()
-            if not text:
-                continue
-            style_name = ""
-            try:
-                style_name = para.style.name or ""
-            except Exception:
-                style_name = ""
+            # 4. Initialize Converter
+            converter = DocumentConverter(
+                allowed_formats=[InputFormat.DOCX],
+                format_options={
+                    InputFormat.DOCX: WordFormatOption(
+                        pipeline_options=pipeline_options
+                    )
+                },
+            )
 
-            if style_name.lower().startswith("heading"):
-                match = re.search(r"(\d+)", style_name)
-                level = int(match.group(1)) if match else 2
-                level = max(1, min(level, 6))
-                markdown_line = f"{'#' * level} {text}"
-            else:
-                markdown_line = text
+            # 5. Conversion and Markdown Export
+            conv_res = converter.convert(str(doc_path))
+            doc = conv_res.document
 
-            paragraph_lines.append(markdown_line)
-            paragraph_count += 1
-            if max_paragraphs is not None and paragraph_count >= max_paragraphs:
-                break
+            if not doc:
+                raise RuntimeError(
+                    "Docling conversion returned an empty document object."
+                )
 
-        for idx, table in enumerate(document.tables, start=1):
-            rows: List[List[str]] = []
-            max_cols = 0
-            for row in table.rows:
-                cells = [cell.text.replace("\n", " ").strip() for cell in row.cells]
-                max_cols = max(max_cols, len(cells))
-                rows.append(cells)
+            markdown_content = doc.export_to_markdown() or ""
 
-            if not rows or max_cols == 0:
-                continue
+            # 6. Smart Truncation
+            if max_chars is not None:
+                markdown_content = self._smart_truncate(markdown_content, max_chars)
 
-            normalized_rows: List[List[str]] = []
-            for row in rows:
-                normalized_rows.append(row + [""] * (max_cols - len(row)))
+            # Output Consistency
+            markdown_path.write_text(markdown_content, encoding="utf-8")
 
-            header = normalized_rows[0]
-            separator = ["---"] * max_cols
-            body_rows = normalized_rows[1:]
+            self.logger.info("Parser: simple_docx (Docling-powered CPU Mode)")
+            self.logger.info(f"Input file: {doc_path.resolve()}")
+            self.logger.info(f"Output markdown path: {markdown_path.resolve()}")
 
-            table_lines = [f"Table {idx}:", f"| {' | '.join(header)} |", f"| {' | '.join(separator)} |"]
-            for body_row in body_rows:
-                table_lines.append(f"| {' | '.join(body_row)} |")
+            # Final output adheres strictly to LightRAG requirement
+            return [
+                {
+                    "type": "text",
+                    "text": markdown_content,
+                    "page_idx": 0,
+                }
+            ]
 
-            table_markdowns.append("\n".join(table_lines))
-            table_count += 1
-
-        markdown_parts = [f"# Source: {doc_path.name}", "", "## Paragraphs"]
-        if paragraph_lines:
-            markdown_parts.extend(paragraph_lines)
-        else:
-            markdown_parts.append("(No paragraph text extracted)")
-
-        markdown_parts.extend(["", "## Tables"])
-        if table_markdowns:
-            markdown_parts.extend(table_markdowns)
-        else:
-            markdown_parts.append("(No tables extracted)")
-
-        markdown_content = "\n".join(markdown_parts).strip() + "\n"
-        if max_chars is not None and max_chars > 0 and len(markdown_content) > max_chars:
-            markdown_content = markdown_content[:max_chars].rstrip() + "\n\n[TRUNCATED_BY_MAX_CHARS]\n"
-        markdown_path.write_text(markdown_content, encoding="utf-8")
-
-        self.logger.info("Parser: simple_docx")
-        self.logger.info(f"Input file: {doc_path.resolve()}")
-        self.logger.info(f"Output markdown path: {markdown_path.resolve()}")
-        self.logger.info(f"Extracted paragraphs: {paragraph_count}")
-        self.logger.info(f"Extracted tables: {table_count}")
-        if max_paragraphs is not None:
-            self.logger.info(f"Applied max_paragraphs: {max_paragraphs}")
-        if max_chars is not None:
-            self.logger.info(f"Applied max_chars: {max_chars}")
-
-        content_list: List[Dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": markdown_content,
-                "page_idx": 0,
-            }
-        ]
-        return content_list
+        except Exception as e:
+            # 7. Descriptive Error Handling
+            self.logger.error(
+                f"Error during Docling parsing for {doc_path}. "
+                f"This failure might be due to Memory limits (OOM), missing native dependencies, or file corruption. Details: {e}"
+            )
+            raise RuntimeError(f"Docling parsing failed: {e}") from e
 
     def parse_document(
         self,
@@ -1667,16 +1678,22 @@ class SimpleDocxParser(Parser):
         file_path = Path(file_path)
         if file_path.suffix.lower() == ".docx":
             return self.parse_office_doc(file_path, output_dir, lang, **kwargs)
-        raise ValueError(
-            f"simple_docx supports only .docx. Got: {file_path.suffix}"
-        )
+        raise ValueError(f"simple_docx supports only .docx. Got: {file_path.suffix}")
 
     def check_installation(self) -> bool:
+        self._setup_docling_env()
         try:
-            from docx import Document  # noqa: F401
+            from docling.document_converter import DocumentConverter
+            from docling.datamodel.base_models import InputFormat
 
+            # Verify ability to instantiate DocumentConverter
+            _ = DocumentConverter(allowed_formats=[InputFormat.DOCX])
             return True
-        except Exception:
+        except Exception as e:
+            self.logger.error(
+                f"Docling check_installation failed: {e}. "
+                "Please run: pip install docling torch --index-url https://download.pytorch.org/whl/cpu"
+            )
             return False
 
 
@@ -1714,7 +1731,9 @@ class DoclingParser(Parser):
         return "docling"
 
     @staticmethod
-    def _build_docling_env(custom_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    def _build_docling_env(
+        custom_env: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
         """Build a writable runtime env for Docling/HuggingFace on Windows."""
         env = os.environ.copy()
         if custom_env:
@@ -1784,7 +1803,9 @@ class DoclingParser(Parser):
 
         def _safe_create_symlink(src_rel_or_abs, abs_dst, new_blob=False):
             try:
-                return original_create_symlink(src_rel_or_abs, abs_dst, new_blob=new_blob)
+                return original_create_symlink(
+                    src_rel_or_abs, abs_dst, new_blob=new_blob
+                )
             except OSError as e:
                 if getattr(e, "winerror", None) != 1314:
                     raise
@@ -1845,7 +1866,9 @@ class DoclingParser(Parser):
                 file_subdir = base_output_dir / name_without_suff / "docling"
                 file_subdir.mkdir(parents=True, exist_ok=True)
                 md_file = file_subdir / f"{name_without_suff}.md"
-                content_list_file = file_subdir / f"{name_without_suff}_content_list.json"
+                content_list_file = (
+                    file_subdir / f"{name_without_suff}_content_list.json"
+                )
 
                 with self._temporary_env(docling_env):
                     self._patch_hf_symlink_for_windows()
@@ -1907,7 +1930,9 @@ class DoclingParser(Parser):
 
                 raise RuntimeError("Docling API returned no extractable text blocks")
             except Exception as api_exc:
-                raise RuntimeError(f"Docling API parsing failed: {api_exc}") from api_exc
+                raise RuntimeError(
+                    f"Docling API parsing failed: {api_exc}"
+                ) from api_exc
 
         except Exception as e:
             self.logger.error(f"Error in parse_pdf: {str(e)}")

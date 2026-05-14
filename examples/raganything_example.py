@@ -20,7 +20,7 @@ import sys
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from lightrag.llm.openai import openai_complete_if_cache, openai_embed
+from lightrag.llm.openai import openai_complete_if_cache
 from lightrag.utils import EmbeddingFunc, logger, set_verbose_debug
 from raganything import RAGAnything, RAGAnythingConfig
 from openai import AsyncOpenAI, RateLimitError, APITimeoutError, APIConnectionError
@@ -140,6 +140,7 @@ async def process_with_rag(
     max_chars: Optional[int] = None,
     max_paragraphs: Optional[int] = None,
     skip_query: bool = False,
+    cli_queries: Optional[List[str]] = None,
     embedding_workers: int = 1,
     embedding_batch_num: int = 1,
     embedding_max_retries: int = 1,
@@ -162,7 +163,9 @@ async def process_with_rag(
         llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
         vision_model = os.getenv("VISION_MODEL", "gpt-4o")
 
-        async def llm_model_func(prompt, system_prompt=None, history_messages=[], **kwargs):
+        async def llm_model_func(
+            prompt, system_prompt=None, history_messages=[], **kwargs
+        ):
             attempts = max(0, int(llm_max_retries)) + 1
             delay = max(0.0, float(llm_backoff_base_sec))
             messages = kwargs.pop("messages", None)
@@ -283,56 +286,6 @@ async def process_with_rag(
 
         embedding_dim = int(os.getenv("EMBEDDING_DIM", "3072"))
         embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
-        embedding_provider = os.getenv("EMBEDDING_PROVIDER", "openai").lower()
-        ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        ollama_embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-local")
-
-        async def ollama_embed_local(texts, model, base_url, target_dim):
-            import aiohttp
-            try:
-                async with aiohttp.ClientSession() as session:
-                    try:
-                        async with session.get(f"{base_url.rstrip('/')}/api/tags") as tags_resp:
-                            if tags_resp.status != 200:
-                                raise Exception("Server error on /api/tags")
-                            tags_data = await tags_resp.json()
-                            models = [m["name"] for m in tags_data.get("models", [])]
-                            model_names = [m.split(":")[0] for m in models] + models
-                            if model not in model_names:
-                                raise ValueError(f"Ollama model not found. Current model should be {model}.")
-                    except ValueError:
-                        raise
-                    except Exception:
-                        raise ConnectionError("Ollama server is not running. Please start Ollama.")
-
-                    url = f"{base_url.rstrip('/')}/api/embed"
-                    payload = {"model": model, "input": texts}
-                    async with session.post(url, json=payload) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if "embeddings" in data:
-                                emb = data["embeddings"]
-                                if len(emb) > 0 and len(emb[0]) != target_dim:
-                                    raise ValueError(f"Ollama embedding dimension mismatch. Expected {target_dim}, got {len(emb[0])}")
-                                return np.array(emb, dtype=np.float32)
-
-                    # Fallback to /api/embeddings
-                    url = f"{base_url.rstrip('/')}/api/embeddings"
-                    results = []
-                    for text in texts:
-                        payload = {"model": model, "prompt": text}
-                        async with session.post(url, json=payload) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                emb = data["embedding"]
-                                if len(emb) != target_dim:
-                                    raise ValueError(f"Ollama embedding dimension mismatch. Expected {target_dim}, got {len(emb)}")
-                                results.append(emb)
-                            else:
-                                raise RuntimeError(f"Ollama embedding failed with status {resp.status}")
-                    return np.array(results, dtype=np.float32)
-            except aiohttp.ClientError:
-                raise ConnectionError("Ollama server is not running. Please start Ollama.")
 
         async def gemini_embed_with_backoff(texts, model, api_key, base_url):
             attempts = max(0, int(embedding_max_retries)) + 1
@@ -362,7 +315,9 @@ async def process_with_rag(
                     if attempt >= attempts:
                         raise
                     jitter = random.uniform(0, 0.5)
-                    sleep_s = min(max(0.0, delay) * (1.0 + jitter), embedding_backoff_max_sec)
+                    sleep_s = min(
+                        max(0.0, delay) * (1.0 + jitter), embedding_backoff_max_sec
+                    )
                     logger.warning(
                         "Embedding rate limited. Retrying in %.1fs (attempt %d/%d)...",
                         sleep_s,
@@ -376,7 +331,9 @@ async def process_with_rag(
                     if attempt >= attempts:
                         raise
                     jitter = random.uniform(0, 0.5)
-                    sleep_s = min(max(1.0, delay) * (1.0 + jitter), embedding_backoff_max_sec)
+                    sleep_s = min(
+                        max(1.0, delay) * (1.0 + jitter), embedding_backoff_max_sec
+                    )
                     logger.warning(
                         "Embedding transient error. Retrying in %.1fs (attempt %d/%d): %s",
                         sleep_s,
@@ -390,34 +347,16 @@ async def process_with_rag(
                 raise last_exc
             raise RuntimeError("Embedding failed without explicit exception.")
 
-        if embedding_provider == "ollama":
-            logger.info("EMBEDDING_PROVIDER=%s", embedding_provider)
-            logger.info("OLLAMA_BASE_URL=%s", ollama_base_url)
-            logger.info("OLLAMA_EMBEDDING_MODEL=%s", ollama_embedding_model)
-            logger.info("EMBEDDING_DIM=%s", embedding_dim)
-            logger.info("LLM_MODEL=%s", llm_model)
-
-            embedding_func = EmbeddingFunc(
-                embedding_dim=embedding_dim,
-                max_token_size=8192,
-                func=partial(
-                    ollama_embed_local,
-                    model=ollama_embedding_model,
-                    base_url=ollama_base_url,
-                    target_dim=embedding_dim,
-                ),
-            )
-        else:
-            embedding_func = EmbeddingFunc(
-                embedding_dim=embedding_dim,
-                max_token_size=8192,
-                func=partial(
-                    gemini_embed_with_backoff,
-                    model=embedding_model,
-                    api_key=api_key,
-                    base_url=base_url,
-                ),
-            )
+        embedding_func = EmbeddingFunc(
+            embedding_dim=embedding_dim,
+            max_token_size=8192,
+            func=partial(
+                gemini_embed_with_backoff,
+                model=embedding_model,
+                api_key=api_key,
+                base_url=base_url,
+            ),
+        )
 
         env_for_parser = {"TEMP": abs_tmp_dir, "TMP": abs_tmp_dir}
 
@@ -428,9 +367,15 @@ async def process_with_rag(
         logger.info("Embedding workers: %s", embedding_workers)
         logger.info("Embedding batch size: %s", embedding_batch_num)
         logger.info("Embedding max retries: %s", embedding_max_retries)
-        logger.info("Embedding backoff base/max sec: %s/%s", embedding_backoff_base_sec, embedding_backoff_max_sec)
+        logger.info(
+            "Embedding backoff base/max sec: %s/%s",
+            embedding_backoff_base_sec,
+            embedding_backoff_max_sec,
+        )
         logger.info("LLM max retries: %s", llm_max_retries)
-        logger.info("LLM backoff base/max sec: %s/%s", llm_backoff_base_sec, llm_backoff_max_sec)
+        logger.info(
+            "LLM backoff base/max sec: %s/%s", llm_backoff_base_sec, llm_backoff_max_sec
+        )
         if max_chars is not None:
             logger.info("simple_docx max_chars: %s", max_chars)
         if max_paragraphs is not None:
@@ -518,16 +463,26 @@ async def process_with_rag(
             except Exception as e:
                 last_error = e
                 if _is_gemini_quota_exceeded(e):
-                    logger.error("Gemini quota exceeded. Stop early to avoid long retries.")
+                    logger.error(
+                        "Gemini quota exceeded. Stop early to avoid long retries."
+                    )
                     break
-                if parser_name == "mineru" and _is_windows_winerror5(e) and enable_parser_fallback:
+                if (
+                    parser_name == "mineru"
+                    and _is_windows_winerror5(e)
+                    and enable_parser_fallback
+                ):
                     logger.warning(
                         "MinerU failed on Windows CPU due to WinError 5. Trying fallback parser..."
                     )
                     continue
 
                 if enable_parser_fallback and parser_name != parser_order[-1]:
-                    logger.warning("Parser '%s' failed: %s. Trying next fallback...", parser_name, str(e))
+                    logger.warning(
+                        "Parser '%s' failed: %s. Trying next fallback...",
+                        parser_name,
+                        str(e),
+                    )
                     continue
 
                 break
@@ -545,18 +500,24 @@ async def process_with_rag(
             return
 
         if skip_query:
-            logger.info("Skip query enabled. Ingest/index completed, query step skipped.")
+            logger.info(
+                "Skip query enabled. Ingest/index completed, query step skipped."
+            )
             return
 
         logger.info("\nQuerying processed document (parser used: %s):", used_parser)
 
-        text_queries = [
-            "Trong Bộ luật Lao động 2012, Điều 1 quy định về nội dung gì?",
-            "Trong Bộ luật Lao động 2019, độ tuổi lao động tối thiểu là bao nhiêu?",
-            "Khái niệm cưỡng bức lao động được định nghĩa ở đâu trong Bộ luật Lao động 2019?",
-            "Bộ luật Lao động 2012 có áp dụng cho người lao động nước ngoài làm việc tại Việt Nam không?",
-            "So sánh phạm vi điều chỉnh của Bộ luật Lao động 2012 và Bộ luật Lao động 2019.",
-        ]
+        # If CLI provided queries (via --query / -q), use them; otherwise use default sample queries
+        if cli_queries and len(cli_queries) > 0:
+            text_queries = cli_queries
+        else:
+            text_queries = [
+                "Trong Bộ luật Lao động 2012, Điều 1 quy định về nội dung gì?",
+                "Trong Bộ luật Lao động 2019, độ tuổi lao động tối thiểu là bao nhiêu?",
+                "Khái niệm cưỡng bức lao động được định nghĩa ở đâu trong Bộ luật Lao động 2019?",
+                "Bộ luật Lao động 2012 có áp dụng cho người lao động nước ngoài làm việc tại Việt Nam không?",
+                "So sánh phạm vi điều chỉnh của Bộ luật Lao động 2012 và Bộ luật Lao động 2019.",
+            ]
 
         for query in text_queries:
             logger.info("\n[Text Query]: %s", query)
@@ -564,7 +525,9 @@ async def process_with_rag(
                 result = await rag.aquery(query, mode="hybrid")
             except Exception as query_exc:
                 if _is_gemini_quota_exceeded(query_exc):
-                    logger.error("Gemini quota exceeded during query. Stopping query loop.")
+                    logger.error(
+                        "Gemini quota exceeded during query. Stopping query loop."
+                    )
                     return
                 raise
             if result is None:
@@ -582,8 +545,12 @@ async def process_with_rag(
 def main():
     parser = argparse.ArgumentParser(description="MinerU RAG Example")
     parser.add_argument("file_path", help="Path to the document to process")
-    parser.add_argument("--working_dir", "-w", default="./rag_storage", help="Working directory path")
-    parser.add_argument("--output", "-o", default="./output", help="Output directory path")
+    parser.add_argument(
+        "--working_dir", "-w", default="./rag_storage", help="Working directory path"
+    )
+    parser.add_argument(
+        "--output", "-o", default="./output", help="Output directory path"
+    )
     parser.add_argument(
         "--api-key",
         default=os.getenv("LLM_BINDING_API_KEY"),
@@ -689,6 +656,12 @@ def main():
         default=float(os.getenv("LLM_BACKOFF_MAX_SEC", "20")),
         help="Max backoff seconds for LLM retries (default: 20).",
     )
+    parser.add_argument(
+        "--query",
+        "-q",
+        action="append",
+        help="Text query to run after ingestion. Can be specified multiple times.",
+    )
 
     args = parser.parse_args()
 
@@ -713,6 +686,7 @@ def main():
             and os.getenv("ENABLE_PARSER_FALLBACK", "true").lower() == "true",
             args.max_chars,
             args.max_paragraphs,
+            args.query,
             args.skip_query,
             args.embedding_workers,
             args.embedding_batch_num,
