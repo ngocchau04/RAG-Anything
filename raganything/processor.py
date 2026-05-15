@@ -381,6 +381,9 @@ class ProcessorMixin:
                 ".webp",
             ]:
                 self.logger.info("Detected image file, using parser for images...")
+                allow_mineru_image_fallback = kwargs.pop(
+                    "allow_mineru_image_fallback", True
+                )
                 try:
                     content_list = await asyncio.to_thread(
                         doc_parser.parse_image,
@@ -389,6 +392,11 @@ class ProcessorMixin:
                         **kwargs,
                     )
                 except NotImplementedError:
+                    if not allow_mineru_image_fallback:
+                        raise NotImplementedError(
+                            f"{self.config.parser} parser doesn't support image parsing, "
+                            "and MinerU fallback is disabled in current environment."
+                        )
                     # Fallback to MinerU for image parsing if current parser doesn't support it
                     self.logger.warning(
                         f"{self.config.parser} parser doesn't support image parsing, falling back to MinerU"

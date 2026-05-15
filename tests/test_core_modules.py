@@ -224,7 +224,14 @@ class TestValidateImageFile:
         real = tmp_path / "real.jpg"
         real.write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
         link = tmp_path / "link.jpg"
-        link.symlink_to(real)
+        try:
+            link.symlink_to(real)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) == 1314:
+                pytest.skip(
+                    "Symlink creation privilege is not available on this Windows environment."
+                )
+            raise
         assert validate_image_file(str(link)) is False
 
     def test_all_valid_extensions(self, tmp_path):

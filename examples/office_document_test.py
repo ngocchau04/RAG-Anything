@@ -22,14 +22,25 @@ from raganything import RAGAnything
 
 def check_libreoffice_installation():
     """Check if LibreOffice is installed and available"""
+    import shutil
     import subprocess
 
-    for cmd in ["libreoffice", "soffice"]:
+    for cmd in ["soffice.com", "soffice", "libreoffice"]:
+        cmd_path = shutil.which(cmd)
+        if not cmd_path:
+            continue
         try:
             result = subprocess.run(
-                [cmd, "--version"], capture_output=True, check=True, timeout=10
+                [cmd_path, "--version"],
+                capture_output=True,
+                check=True,
+                timeout=10,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
             )
-            print(f"✅ LibreOffice found: {result.stdout.decode().strip()}")
+            version = (result.stdout or result.stderr or "").strip()
+            print(f"? LibreOffice found: {cmd_path} {version}")
             return True
         except (
             subprocess.CalledProcessError,
@@ -38,7 +49,36 @@ def check_libreoffice_installation():
         ):
             continue
 
-    print("❌ LibreOffice not found. Please install LibreOffice:")
+    windows_candidates = [
+        Path(r"C:\Program Files\LibreOffice\program\soffice.com"),
+        Path(r"C:\Program Files\LibreOffice\program\soffice.exe"),
+        Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.com"),
+        Path(r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"),
+    ]
+    for candidate in windows_candidates:
+        if not candidate.exists():
+            continue
+        try:
+            result = subprocess.run(
+                [str(candidate), "--version"],
+                capture_output=True,
+                check=True,
+                timeout=10,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            version = (result.stdout or result.stderr or "").strip()
+            print(f"? LibreOffice found: {candidate} {version}")
+            return True
+        except (
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+        ):
+            continue
+
+    print("? LibreOffice not found. Please install LibreOffice:")
     print("  - Windows: Download from https://www.libreoffice.org/download/download/")
     print("  - macOS: brew install --cask libreoffice")
     print("  - Ubuntu/Debian: sudo apt-get install libreoffice")

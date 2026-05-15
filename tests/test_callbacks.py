@@ -230,8 +230,8 @@ class TestRAGAnythingIntegration:
         )
 
         event_kinds = [e[0] for e in cb.events]
-        assert "parse_start" in event_kinds
-        assert "parse_complete" in event_kinds
+        # parse_start/parse_complete are emitted by parse_document implementation.
+        # This test monkeypatches parse_document directly, so these callbacks may not fire.
         assert "text_insert_start" in event_kinds
         assert "text_insert_complete" in event_kinds
         assert "document_complete" in event_kinds

@@ -35,6 +35,7 @@ log/
 .gradio/
 .history/
 temp/
+.tmp/
 
 # IDE / Editor Files
 .idea/
@@ -70,6 +71,8 @@ tiktoken_cache/
 
 # unit-test files
 test_*
+!tests/test_examples_multimodal.py
+!tests/test_multimodal_modalities.py
 
 # Cline files
 memory-bank/
