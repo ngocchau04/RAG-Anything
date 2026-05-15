@@ -7,7 +7,6 @@ import os
 import json
 import argparse
 import asyncio
-import inspect
 import base64
 import logging
 import logging.config
@@ -162,7 +161,9 @@ def _parse_page_range(page_range: Optional[str]) -> tuple[Optional[int], Optiona
     return start, end
 
 
-def _parse_page_selection(page_range: Optional[str], max_pages: Optional[int]) -> Optional[List[int]]:
+def _parse_page_selection(
+    page_range: Optional[str], max_pages: Optional[int]
+) -> Optional[List[int]]:
     """Parse page selection syntax like '3,5,7-13' into 0-based page indexes.
 
     Returns None when no explicit page selection is provided.
@@ -248,7 +249,9 @@ def _extract_text_from_pdf_fast(
         doc = fitz.open(pdf_path)
         try:
             total = len(doc)
-            page_indices = selected_pages if selected_pages is not None else range(total)
+            page_indices = (
+                selected_pages if selected_pages is not None else range(total)
+            )
             for i in page_indices:
                 if i < 0 or i >= total:
                     continue
@@ -269,7 +272,9 @@ def _extract_text_from_pdf_fast(
 
         with pdfplumber.open(pdf_path) as pdf:
             total = len(pdf.pages)
-            page_indices = selected_pages if selected_pages is not None else range(total)
+            page_indices = (
+                selected_pages if selected_pages is not None else range(total)
+            )
             for i in page_indices:
                 if i < 0 or i >= total:
                     continue
@@ -307,7 +312,9 @@ def _extract_tables_from_pdf_pdfplumber(
     try:
         with pdfplumber.open(pdf_path) as pdf:
             total = len(pdf.pages)
-            page_indices = selected_pages if selected_pages is not None else range(total)
+            page_indices = (
+                selected_pages if selected_pages is not None else range(total)
+            )
             scanned = 0
             for i in page_indices:
                 if i < 0 or i >= total:
@@ -870,7 +877,10 @@ async def process_with_rag(
                 ),
             )
         elif embedding_provider in {"gemini", "openai"}:
-            if embedding_provider == "gemini" and embedding_model == "text-embedding-3-large":
+            if (
+                embedding_provider == "gemini"
+                and embedding_model == "text-embedding-3-large"
+            ):
                 raise RuntimeError(
                     "Embedding provider/model mismatch: Gemini provider cannot use text-embedding-3-large. "
                     "Use EMBEDDING_MODEL=gemini-embedding-001 or switch to EMBEDDING_PROVIDER=ollama."
@@ -992,7 +1002,9 @@ async def process_with_rag(
                 "PDF %s mode enabled (CPU text extraction)",
                 "hybrid" if use_pdf_hybrid else "fast",
             )
-            logger.info("PDF fast options: max_pages=%s, page_range=%s", max_pages, page_range)
+            logger.info(
+                "PDF fast options: max_pages=%s, page_range=%s", max_pages, page_range
+            )
             logger.info("Parser init duration: %.2fs", perf_counter() - t_init)
             t_extract = perf_counter()
             fast_content = _extract_text_from_pdf_fast(
@@ -1000,7 +1012,9 @@ async def process_with_rag(
                 max_pages=max_pages,
                 page_range=page_range,
             )
-            logger.info("PDF fast extraction duration: %.2fs", perf_counter() - t_extract)
+            logger.info(
+                "PDF fast extraction duration: %.2fs", perf_counter() - t_extract
+            )
             if not fast_content:
                 logger.error("PDF fast extraction found no text content.")
                 return
@@ -1018,7 +1032,9 @@ async def process_with_rag(
                 )
                 combined_content.extend(table_blocks)
 
-                if (not no_vision) and _has_vision_provider(api_key=api_key, base_url=base_url):
+                if (not no_vision) and _has_vision_provider(
+                    api_key=api_key, base_url=base_url
+                ):
                     t_render = perf_counter()
                     render_dir = str(
                         Path(abs_tmp_dir) / "pdf_hybrid" / Path(abs_file_path).stem
@@ -1119,7 +1135,11 @@ async def process_with_rag(
             parse_success = True
 
         if is_image_input:
-            parser_name = primary_parser if primary_parser in {"paddleocr", "docling"} else "paddleocr"
+            parser_name = (
+                primary_parser
+                if primary_parser in {"paddleocr", "docling"}
+                else "paddleocr"
+            )
             t_init = perf_counter()
             config = RAGAnythingConfig(
                 working_dir=abs_working_dir,
@@ -1175,7 +1195,8 @@ async def process_with_rag(
             except Exception as image_exc:
                 last_error = image_exc
                 logger.warning(
-                    "Image vision path failed: %s. Trying OCR fallback...", str(image_exc)
+                    "Image vision path failed: %s. Trying OCR fallback...",
+                    str(image_exc),
                 )
                 try:
                     ocr_text = _extract_text_from_image_with_paddleocr(abs_file_path)
@@ -1212,11 +1233,11 @@ async def process_with_rag(
                     lightrag_kwargs={
                         "embedding_func_max_async": max(1, int(embedding_workers)),
                         "embedding_batch_num": max(1, int(embedding_batch_num)),
-                    "llm_model_max_async": 1,
-                    "max_parallel_insert": 1,
-                    "entity_extract_max_gleaning": 0 if skip_kg_extraction else 1,
-                },
-            )
+                        "llm_model_max_async": 1,
+                        "max_parallel_insert": 1,
+                        "entity_extract_max_gleaning": 0 if skip_kg_extraction else 1,
+                    },
+                )
                 logger.info("Parser init duration: %.2fs", perf_counter() - t_init)
 
                 logger.info("Parser trial: %s", parser_name)
@@ -1238,12 +1259,17 @@ async def process_with_rag(
                     parser_kwargs["backend"] = mineru_backend
                     parser_kwargs["device"] = mineru_device
                 # simple_docx-only trimming options; do not pass to image/parser paths
-                if parser_name == "simple_docx" and Path(abs_file_path).suffix.lower() == ".docx":
+                if (
+                    parser_name == "simple_docx"
+                    and Path(abs_file_path).suffix.lower() == ".docx"
+                ):
                     parser_kwargs["max_chars"] = max_chars
                     parser_kwargs["max_paragraphs"] = max_paragraphs
                 t_parse = perf_counter()
                 await rag.process_document_complete(**parser_kwargs)
-                logger.info("Document parse/index duration: %.2fs", perf_counter() - t_parse)
+                logger.info(
+                    "Document parse/index duration: %.2fs", perf_counter() - t_parse
+                )
 
                 if not _is_index_ready(abs_working_dir):
                     raise RuntimeError(

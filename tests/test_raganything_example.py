@@ -81,7 +81,9 @@ async def test_image_input_does_not_fallback_mineru(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_image_input_with_user_query_does_not_run_demo_queries(monkeypatch, tmp_path):
+async def test_image_input_with_user_query_does_not_run_demo_queries(
+    monkeypatch, tmp_path
+):
     module = _load_example_module()
     captured_queries = []
 
@@ -201,7 +203,9 @@ async def test_pdf_fast_path_forwards_max_pages_and_page_range(monkeypatch, tmp_
 
 
 @pytest.mark.asyncio
-async def test_image_input_ocr_fallback_no_text_returns_clear_message(monkeypatch, tmp_path):
+async def test_image_input_ocr_fallback_no_text_returns_clear_message(
+    monkeypatch, tmp_path
+):
     module = _load_example_module()
     errors = []
 
@@ -217,8 +221,14 @@ async def test_image_input_ocr_fallback_no_text_returns_clear_message(monkeypatc
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
     monkeypatch.setattr(module, "_has_vision_provider", lambda *_, **__: False)
-    monkeypatch.setattr(module, "_extract_text_from_image_with_paddleocr", lambda *_: "")
-    monkeypatch.setattr(module.logger, "error", lambda msg, *args: errors.append(msg % args if args else msg))
+    monkeypatch.setattr(
+        module, "_extract_text_from_image_with_paddleocr", lambda *_: ""
+    )
+    monkeypatch.setattr(
+        module.logger,
+        "error",
+        lambda msg, *args: errors.append(msg % args if args else msg),
+    )
 
     image_file = tmp_path / "sample.png"
     image_file.write_bytes(b"fake-image")
@@ -317,8 +327,10 @@ async def test_ollama_embedding_provider_does_not_call_gemini(monkeypatch, tmp_p
 
     monkeypatch.setattr(module, "EmbeddingFunc", DummyEmbeddingFunc)
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
+
     async def _noop(*args, **kwargs):
         return None
+
     monkeypatch.setattr(module, "_ensure_ollama_model_available", _noop)
     monkeypatch.setattr(module, "_has_vision_provider", lambda *_, **__: False)
     monkeypatch.setattr(
@@ -354,7 +366,11 @@ async def test_embedding_provider_model_mismatch_fails_early(monkeypatch, tmp_pa
 
     monkeypatch.setenv("EMBEDDING_PROVIDER", "gemini")
     monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-3-large")
-    monkeypatch.setattr(module.logger, "error", lambda msg, *args: errors.append(msg % args if args else msg))
+    monkeypatch.setattr(
+        module.logger,
+        "error",
+        lambda msg, *args: errors.append(msg % args if args else msg),
+    )
 
     file_path = tmp_path / "sample.docx"
     file_path.write_text("dummy", encoding="utf-8")
@@ -383,14 +399,20 @@ async def test_embedding_safe_logs_do_not_expose_keys(monkeypatch, tmp_path):
             return None
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
+
     async def _noop(*args, **kwargs):
         return None
+
     monkeypatch.setattr(module, "_ensure_ollama_model_available", _noop)
     monkeypatch.setattr(module, "_has_vision_provider", lambda *_, **__: False)
     monkeypatch.setattr(
         module, "_extract_text_from_image_with_paddleocr", lambda *_: "ocr-text"
     )
-    monkeypatch.setattr(module.logger, "info", lambda msg, *args: info_logs.append(msg % args if args else msg))
+    monkeypatch.setattr(
+        module.logger,
+        "info",
+        lambda msg, *args: info_logs.append(msg % args if args else msg),
+    )
     monkeypatch.setenv("EMBEDDING_PROVIDER", "ollama")
     monkeypatch.setenv("EMBEDDING_MODEL", "nomic-embed-text")
     monkeypatch.setenv("EMBEDDING_DIM", "768")
@@ -433,7 +455,9 @@ async def test_pdf_hybrid_uses_pdf_fast_text_extraction(monkeypatch, tmp_path):
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
     monkeypatch.setattr(module, "_extract_text_from_pdf_fast", fake_fast)
-    monkeypatch.setattr(module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: [])
+    monkeypatch.setattr(
+        module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: []
+    )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", lambda *a, **k: [])
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: False)
 
@@ -453,7 +477,9 @@ async def test_pdf_hybrid_uses_pdf_fast_text_extraction(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pdf_hybrid_extracts_tables_with_pdfplumber_when_available(monkeypatch, tmp_path):
+async def test_pdf_hybrid_extracts_tables_with_pdfplumber_when_available(
+    monkeypatch, tmp_path
+):
     module = _load_example_module()
     captured = {}
 
@@ -466,12 +492,21 @@ async def test_pdf_hybrid_extracts_tables_with_pdfplumber_when_available(monkeyp
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
     monkeypatch.setattr(
-        module, "_extract_text_from_pdf_fast", lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}]
+        module,
+        "_extract_text_from_pdf_fast",
+        lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}],
     )
     monkeypatch.setattr(
         module,
         "_extract_tables_from_pdf_pdfplumber",
-        lambda *a, **k: [{"type": "text", "text": "[PDF Table | page=1 | table=1]", "page_idx": 0, "source": "pdfplumber"}],
+        lambda *a, **k: [
+            {
+                "type": "text",
+                "text": "[PDF Table | page=1 | table=1]",
+                "page_idx": 0,
+                "source": "pdfplumber",
+            }
+        ],
     )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", lambda *a, **k: [])
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: False)
@@ -504,11 +539,21 @@ async def test_pdf_hybrid_skips_tables_when_pdfplumber_missing(monkeypatch, tmp_
             return None
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
-    monkeypatch.setattr(module, "_extract_text_from_pdf_fast", lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}])
-    monkeypatch.setattr(module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: [])
+    monkeypatch.setattr(
+        module,
+        "_extract_text_from_pdf_fast",
+        lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}],
+    )
+    monkeypatch.setattr(
+        module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: []
+    )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", lambda *a, **k: [])
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: False)
-    monkeypatch.setattr(module.logger, "info", lambda msg, *args: infos.append(msg % args if args else msg))
+    monkeypatch.setattr(
+        module.logger,
+        "info",
+        lambda msg, *args: infos.append(msg % args if args else msg),
+    )
 
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -539,14 +584,29 @@ async def test_pdf_hybrid_renders_selected_pages_for_vision(monkeypatch, tmp_pat
 
     def fake_render(*a, **k):
         captured["render_called"] += 1
-        return [{"type": "image", "img_path": "x.png", "page_idx": 2, "source": "pdf_page_render"}]
+        return [
+            {
+                "type": "image",
+                "img_path": "x.png",
+                "page_idx": 2,
+                "source": "pdf_page_render",
+            }
+        ]
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
-    monkeypatch.setattr(module, "_extract_text_from_pdf_fast", lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}])
-    monkeypatch.setattr(module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: [])
+    monkeypatch.setattr(
+        module,
+        "_extract_text_from_pdf_fast",
+        lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}],
+    )
+    monkeypatch.setattr(
+        module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: []
+    )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", fake_render)
+
     async def fake_describe(*args, **kwargs):
         return "visual description"
+
     monkeypatch.setattr(module, "_describe_image_with_vision", fake_describe)
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: True)
 
@@ -580,11 +640,21 @@ async def test_pdf_hybrid_skips_visuals_without_vision_provider(monkeypatch, tmp
             return None
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
-    monkeypatch.setattr(module, "_extract_text_from_pdf_fast", lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}])
-    monkeypatch.setattr(module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: [])
+    monkeypatch.setattr(
+        module,
+        "_extract_text_from_pdf_fast",
+        lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}],
+    )
+    monkeypatch.setattr(
+        module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: []
+    )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", lambda *a, **k: [])
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: False)
-    monkeypatch.setattr(module.logger, "info", lambda msg, *args: infos.append(msg % args if args else msg))
+    monkeypatch.setattr(
+        module.logger,
+        "info",
+        lambda msg, *args: infos.append(msg % args if args else msg),
+    )
 
     pdf = tmp_path / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -598,7 +668,10 @@ async def test_pdf_hybrid_skips_visuals_without_vision_provider(monkeypatch, tmp
         pdf_mode="hybrid",
         skip_query=True,
     )
-    assert any("Vision provider not available; skipped PDF page visual descriptions." in m for m in infos)
+    assert any(
+        "Vision provider not available; skipped PDF page visual descriptions." in m
+        for m in infos
+    )
 
 
 @pytest.mark.asyncio
@@ -617,8 +690,14 @@ async def test_pdf_hybrid_does_not_call_mineru(monkeypatch, tmp_path):
             called["parse_complete"] += 1
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
-    monkeypatch.setattr(module, "_extract_text_from_pdf_fast", lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}])
-    monkeypatch.setattr(module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: [])
+    monkeypatch.setattr(
+        module,
+        "_extract_text_from_pdf_fast",
+        lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}],
+    )
+    monkeypatch.setattr(
+        module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: []
+    )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", lambda *a, **k: [])
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: False)
 
@@ -653,8 +732,14 @@ async def test_pdf_hybrid_does_not_call_docling_by_default(monkeypatch, tmp_path
             called["parse_complete"] += 1
 
     monkeypatch.setattr(module, "RAGAnything", DummyRAG)
-    monkeypatch.setattr(module, "_extract_text_from_pdf_fast", lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}])
-    monkeypatch.setattr(module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: [])
+    monkeypatch.setattr(
+        module,
+        "_extract_text_from_pdf_fast",
+        lambda *a, **k: [{"type": "text", "text": "base", "page_idx": 0}],
+    )
+    monkeypatch.setattr(
+        module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: []
+    )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", lambda *a, **k: [])
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: False)
 
@@ -717,7 +802,9 @@ def test_resolve_vision_target_page_from_text_blocks():
 
 
 @pytest.mark.asyncio
-async def test_pdf_hybrid_vision_target_not_found_warns_and_does_not_render(monkeypatch, tmp_path):
+async def test_pdf_hybrid_vision_target_not_found_warns_and_does_not_render(
+    monkeypatch, tmp_path
+):
     module = _load_example_module()
     warnings = []
     called = {"render": 0}
@@ -739,7 +826,9 @@ async def test_pdf_hybrid_vision_target_not_found_warns_and_does_not_render(monk
         "_extract_text_from_pdf_fast",
         lambda *a, **k: [{"type": "text", "text": "no figure mention", "page_idx": 0}],
     )
-    monkeypatch.setattr(module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: [])
+    monkeypatch.setattr(
+        module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: []
+    )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", fake_render)
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: True)
     monkeypatch.setattr(
@@ -766,7 +855,9 @@ async def test_pdf_hybrid_vision_target_not_found_warns_and_does_not_render(monk
 
 
 @pytest.mark.asyncio
-async def test_pdf_hybrid_explicit_vision_page_range_overrides_target(monkeypatch, tmp_path):
+async def test_pdf_hybrid_explicit_vision_page_range_overrides_target(
+    monkeypatch, tmp_path
+):
     module = _load_example_module()
     infos = []
     captured = {}
@@ -788,11 +879,15 @@ async def test_pdf_hybrid_explicit_vision_page_range_overrides_target(monkeypatc
         "_extract_text_from_pdf_fast",
         lambda *a, **k: [{"type": "text", "text": "Figure 2 here", "page_idx": 2}],
     )
-    monkeypatch.setattr(module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: [])
+    monkeypatch.setattr(
+        module, "_extract_tables_from_pdf_pdfplumber", lambda *a, **k: []
+    )
     monkeypatch.setattr(module, "_render_pdf_pages_for_vision", fake_render)
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: True)
     monkeypatch.setattr(
-        module.logger, "info", lambda msg, *args: infos.append(msg % args if args else msg)
+        module.logger,
+        "info",
+        lambda msg, *args: infos.append(msg % args if args else msg),
     )
 
     pdf = tmp_path / "a.pdf"
