@@ -4,6 +4,7 @@ Configuration classes for RAGAnything
 Contains configuration dataclasses with environment variable support
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import List
 from lightrag.utils import get_env_value
@@ -156,3 +157,83 @@ class RAGAnythingConfig:
             stacklevel=2,
         )
         self.parse_method = value
+
+
+@dataclass
+class EmbeddingRuntimeConfig:
+    provider: str
+    model: str
+    dim: int
+    ollama_host: str
+    provider_source: str
+    model_source: str
+    dim_source: str
+    host_source: str
+
+
+def resolve_embedding_runtime_config(
+    env: dict | None = None, default_provider: str = "openai"
+) -> EmbeddingRuntimeConfig:
+    """Resolve embedding runtime config with provider-aware defaults."""
+    values = env or os.environ
+
+    provider_raw = values.get("EMBEDDING_PROVIDER")
+    binding_raw = values.get("EMBEDDING_BINDING")
+    provider = (provider_raw or binding_raw or default_provider).strip().lower()
+    provider_source = (
+        "env:EMBEDDING_PROVIDER"
+        if provider_raw
+        else ("env:EMBEDDING_BINDING" if binding_raw else f"default:{default_provider}")
+    )
+
+    model_raw = values.get("EMBEDDING_MODEL")
+    dim_raw = values.get("EMBEDDING_DIM")
+    host_raw = values.get("OLLAMA_HOST") or values.get("OLLAMA_BASE_URL")
+
+    if provider == "ollama":
+        model = (model_raw or "nomic-embed-local:latest").strip()
+        if model == "text-embedding-3-large":
+            raise RuntimeError(
+                "Embedding provider/model mismatch: Ollama cannot use text-embedding-3-large. "
+                "Set EMBEDDING_MODEL=nomic-embed-local:latest or another model from `ollama list`."
+            )
+        dim = int((dim_raw or "768").strip())
+        host = (host_raw or "http://localhost:11434").strip()
+        return EmbeddingRuntimeConfig(
+            provider=provider,
+            model=model,
+            dim=dim,
+            ollama_host=host,
+            provider_source=provider_source,
+            model_source=(
+                "env:EMBEDDING_MODEL"
+                if model_raw
+                else "default:ollama(nomic-embed-local:latest)"
+            ),
+            dim_source=("env:EMBEDDING_DIM" if dim_raw else "default:ollama(768)"),
+            host_source=(
+                "env:OLLAMA_HOST/OLLAMA_BASE_URL"
+                if host_raw
+                else "default:ollama(http://localhost:11434)"
+            ),
+        )
+
+    model = (model_raw or "text-embedding-3-large").strip()
+    dim = int((dim_raw or "3072").strip())
+    host = (host_raw or "http://localhost:11434").strip()
+    return EmbeddingRuntimeConfig(
+        provider=provider,
+        model=model,
+        dim=dim,
+        ollama_host=host,
+        provider_source=provider_source,
+        model_source=(
+            "env:EMBEDDING_MODEL" if model_raw else "default:openai(text-embedding-3-large)"
+        ),
+        dim_source=("env:EMBEDDING_DIM" if dim_raw else "default:openai(3072)"),
+        host_source=(
+            "env:OLLAMA_HOST/OLLAMA_BASE_URL"
+            if host_raw
+            else "default:ollama(http://localhost:11434)"
+        ),
+    )

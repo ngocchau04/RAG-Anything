@@ -25,7 +25,14 @@ sys.path.append(str(Path(__file__).parent.parent))
 from lightrag.llm.openai import openai_complete_if_cache
 from lightrag.utils import EmbeddingFunc, logger, set_verbose_debug
 from raganything import RAGAnything, RAGAnythingConfig
-from openai import AsyncOpenAI, RateLimitError, APITimeoutError, APIConnectionError
+from raganything.config import resolve_embedding_runtime_config
+from openai import (
+    AsyncOpenAI,
+    RateLimitError,
+    APITimeoutError,
+    APIConnectionError,
+    APIStatusError,
+)
 
 from dotenv import load_dotenv
 
@@ -94,6 +101,16 @@ def _is_gemini_quota_exceeded(exc: Exception) -> bool:
         or "RESOURCE_EXHAUSTED" in msg
         or "quota" in msg.lower()
         or "rate limit" in msg.lower()
+    )
+
+
+def _is_temporary_gemini_unavailable(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "503" in msg
+        or "unavailable" in msg
+        or "high demand" in msg
+        or "temporarily unavailable" in msg
     )
 
 
@@ -679,6 +696,22 @@ async def process_with_rag(
                     )
                     await asyncio.sleep(sleep_s)
                     delay = min(max(1.0, delay) * 2.0, llm_backoff_max_sec)
+                except APIStatusError as exc:
+                    last_exc = exc
+                    if not _is_temporary_gemini_unavailable(exc):
+                        raise
+                    if attempt >= attempts:
+                        raise
+                    jitter = random.uniform(0, 0.5)
+                    sleep_s = min(max(1.0, delay) * (1.0 + jitter), llm_backoff_max_sec)
+                    logger.warning(
+                        "LLM temporary 503/unavailable. Retrying in %.1fs (attempt %d/%d)...",
+                        sleep_s,
+                        attempt,
+                        attempts,
+                    )
+                    await asyncio.sleep(sleep_s)
+                    delay = min(max(1.0, delay) * 2.0, llm_backoff_max_sec)
             if last_exc is not None:
                 raise last_exc
             raise RuntimeError("LLM call failed without explicit exception.")
@@ -734,16 +767,11 @@ async def process_with_rag(
             else:
                 return llm_model_func(prompt, system_prompt, history_messages, **kwargs)
 
-        embedding_provider = (
-            os.getenv("EMBEDDING_PROVIDER")
-            or os.getenv("EMBEDDING_BINDING")
-            or "openai"
-        ).lower()
-        embedding_dim = int(os.getenv("EMBEDDING_DIM", "3072"))
-        embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
-        ollama_host = os.getenv("OLLAMA_HOST") or os.getenv(
-            "OLLAMA_BASE_URL", "http://localhost:11434"
-        )
+        embedding_cfg = resolve_embedding_runtime_config(default_provider="openai")
+        embedding_provider = embedding_cfg.provider
+        embedding_dim = embedding_cfg.dim
+        embedding_model = embedding_cfg.model
+        ollama_host = embedding_cfg.ollama_host
 
         async def gemini_embed_with_backoff(texts, model, api_key, base_url):
             attempts = max(0, int(embedding_max_retries)) + 1
@@ -798,6 +826,24 @@ async def process_with_rag(
                         attempt,
                         attempts,
                         str(exc),
+                    )
+                    await asyncio.sleep(sleep_s)
+                    delay = min(max(1.0, delay) * 2.0, embedding_backoff_max_sec)
+                except APIStatusError as exc:
+                    last_exc = exc
+                    if not _is_temporary_gemini_unavailable(exc):
+                        raise
+                    if attempt >= attempts:
+                        raise
+                    jitter = random.uniform(0, 0.5)
+                    sleep_s = min(
+                        max(1.0, delay) * (1.0 + jitter), embedding_backoff_max_sec
+                    )
+                    logger.warning(
+                        "Embedding temporary 503/unavailable. Retrying in %.1fs (attempt %d/%d)...",
+                        sleep_s,
+                        attempt,
+                        attempts,
                     )
                     await asyncio.sleep(sleep_s)
                     delay = min(max(1.0, delay) * 2.0, embedding_backoff_max_sec)
@@ -866,6 +912,13 @@ async def process_with_rag(
             logger.info("Embedding model: %s", embedding_model)
             logger.info("Embedding dim: %s", embedding_dim)
             logger.info("Embedding host: %s", ollama_host)
+            logger.info(
+                "Embedding config source: provider=%s, model=%s, dim=%s, host=%s",
+                embedding_cfg.provider_source,
+                embedding_cfg.model_source,
+                embedding_cfg.dim_source,
+                embedding_cfg.host_source,
+            )
             embedding_func = EmbeddingFunc(
                 embedding_dim=embedding_dim,
                 max_token_size=8192,
@@ -888,6 +941,12 @@ async def process_with_rag(
             logger.info("Embedding provider: %s", embedding_provider)
             logger.info("Embedding model: %s", embedding_model)
             logger.info("Embedding dim: %s", embedding_dim)
+            logger.info(
+                "Embedding config source: provider=%s, model=%s, dim=%s",
+                embedding_cfg.provider_source,
+                embedding_cfg.model_source,
+                embedding_cfg.dim_source,
+            )
             embedding_func = EmbeddingFunc(
                 embedding_dim=embedding_dim,
                 max_token_size=8192,
@@ -974,6 +1033,11 @@ async def process_with_rag(
         use_pdf_hybrid = is_pdf_input and (
             primary_parser == "pdf_fast" and pdf_mode_normalized == "hybrid"
         )
+        if use_pdf_hybrid and (not skip_kg_extraction):
+            logger.warning(
+                "KG extraction is enabled; this may be slow and consume LLM quota. "
+                "Use --skip-kg-extraction for faster CPU-only testing."
+            )
 
         if use_pdf_fast or use_pdf_hybrid:
             t_init = perf_counter()
@@ -1053,9 +1117,10 @@ async def process_with_rag(
                             target_page_1based = target_page_idx + 1
                             effective_vision_page_range = str(target_page_1based)
                             logger.info(
-                                "Vision target '%s' matched page %s",
+                                "Vision target '%s' matched PDF page %s (internal page_idx=%s)",
                                 vision_target,
                                 target_page_1based,
+                                target_page_idx,
                             )
                         else:
                             logger.warning(
@@ -1099,9 +1164,16 @@ async def process_with_rag(
                                 combined_content.append(
                                     {
                                         "type": "text",
-                                        "text": f"[PDF Vision | page={page_idx + 1}] {desc}",
+                                        "text": (
+                                            f"[PDF Visual Description | "
+                                            f"target={vision_target or 'auto'} | "
+                                            f"page={page_idx + 1} | source=vision]\n{desc}"
+                                        ),
                                         "page_idx": page_idx,
-                                        "source": "pdf_page_vision",
+                                        "page_num": page_idx + 1,
+                                        "target": vision_target or None,
+                                        "image_path": img_path,
+                                        "source": "pdf_vision",
                                     }
                                 )
                                 described += 1

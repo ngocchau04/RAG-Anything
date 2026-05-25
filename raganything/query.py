@@ -392,6 +392,14 @@ class QueryMixin:
         raw_prompt = await self.lightrag.aquery(query, param=query_param)
 
         self.logger.debug("Retrieved raw prompt from LightRAG")
+        indexed_visual_desc_count = str(raw_prompt).count(
+            "[PDF Visual Description |"
+        )
+        if indexed_visual_desc_count > 0:
+            self.logger.info(
+                "Retrieved indexed visual descriptions: %s",
+                indexed_visual_desc_count,
+            )
 
         # 2. Extract and process image paths
         enhanced_prompt, images_found = await self._process_image_paths_for_vlm(
@@ -399,7 +407,9 @@ class QueryMixin:
         )
 
         if not images_found:
-            self.logger.info("No valid images found, falling back to normal query")
+            self.logger.info(
+                "No direct image paths found in query context; using indexed visual descriptions if retrieved."
+            )
             # Fallback to normal query
             query_param = QueryParam(mode=mode, **kwargs)
             return await self.lightrag.aquery(
