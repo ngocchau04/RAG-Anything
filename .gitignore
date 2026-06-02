@@ -14,6 +14,7 @@ venv/
 
 *.env*
 .env_example
+!.env.docker.example
 
 # Build / Distribution
 dist/
@@ -73,6 +74,7 @@ tiktoken_cache/
 test_*
 !tests/test_examples_multimodal.py
 !tests/test_multimodal_modalities.py
+!tests/test_docker_setup.py
 
 # Cline files
 memory-bank/

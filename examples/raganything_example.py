@@ -10,6 +10,7 @@ import asyncio
 import base64
 import logging
 import logging.config
+import re
 from functools import partial
 from pathlib import Path
 from typing import Optional, List
@@ -339,7 +340,20 @@ def _extract_tables_from_pdf_pdfplumber(
                 if max_pages is not None and max_pages > 0 and scanned >= max_pages:
                     break
                 scanned += 1
-                tables = pdf.pages[i].extract_tables() or []
+                page_obj = pdf.pages[i]
+                page_text = (page_obj.extract_text() or "").strip()
+                table_label = ""
+                label_match = re.search(r"\btable\s+(\d+)\b", page_text, flags=re.IGNORECASE)
+                if label_match:
+                    table_label = f"Table {label_match.group(1)}"
+                caption_line = ""
+                for raw_line in page_text.splitlines():
+                    s = raw_line.strip()
+                    if re.search(r"\btable\s+\d+\b", s, flags=re.IGNORECASE):
+                        caption_line = s
+                        break
+
+                tables = page_obj.extract_tables() or []
                 for t_idx, rows in enumerate(tables, start=1):
                     if not rows:
                         continue
@@ -353,8 +367,11 @@ def _extract_tables_from_pdf_pdfplumber(
                     if not normalized:
                         continue
                     header = normalized[0]
+                    resolved_label = table_label or f"Table {t_idx}"
                     md_lines = [
-                        f"[PDF Table | page={i + 1} | table={t_idx}]",
+                        f"[PDF Table | label={resolved_label} | page={i + 1}]",
+                        f"Caption: {caption_line or resolved_label}",
+                        "Rows:",
                         f"| {' | '.join(header)} |",
                         f"| {' | '.join(['---'] * width)} |",
                     ]
@@ -374,6 +391,64 @@ def _extract_tables_from_pdf_pdfplumber(
 
     if not blocks:
         logger.info("No extractable tables found by pdfplumber on selected pages.")
+    return blocks
+
+
+def _extract_equation_blocks_from_text_blocks(text_blocks: List[dict]) -> List[dict]:
+    blocks: List[dict] = []
+    equation_hint = re.compile(
+        r"(=|≈|≤|≥|/|\bTP\b|\bTN\b|\bFP\b|\bFN\b|\baccuracy\b|\bequation\b)",
+        flags=re.IGNORECASE,
+    )
+    for item in text_blocks:
+        page_idx = int(item.get("page_idx", 0))
+        text = str(item.get("text", "") or "")
+        if not text:
+            continue
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        for i, line in enumerate(lines):
+            if not equation_hint.search(line):
+                continue
+            context = [line]
+            for j in range(max(0, i - 2), min(len(lines), i + 3)):
+                if j == i:
+                    continue
+                context.append(lines[j])
+            equation_text = " ".join(context)
+            # Recover common split fraction format:
+            # "Accuracy = TP + TN" + next line "TP + TN + FP + FN"
+            next_line = lines[i + 1] if i + 1 < len(lines) else ""
+            if re.search(r"\baccuracy\b", line, flags=re.IGNORECASE) and "=" in line:
+                lhs, rhs = [p.strip() for p in line.split("=", 1)]
+                if re.search(r"\bTP\b", rhs, flags=re.IGNORECASE) and re.search(
+                    r"\bFP\b|\bFN\b", next_line, flags=re.IGNORECASE
+                ):
+                    equation_text = f"{lhs} = ({rhs}) / ({next_line.strip()})"
+                elif re.search(r"\bTP\b", text, flags=re.IGNORECASE) and re.search(
+                    r"\bTN\b", text, flags=re.IGNORECASE
+                ) and re.search(r"\bFP\b", text, flags=re.IGNORECASE) and re.search(
+                    r"\bFN\b", text, flags=re.IGNORECASE
+                ):
+                    equation_text = "Accuracy = (TP + TN) / (TP + TN + FP + FN)"
+            if len(equation_text) < 20:
+                continue
+            if equation_text.count("=") == 0 and not re.search(
+                r"\bTP\b|\bTN\b|\bFP\b|\bFN\b", equation_text, flags=re.IGNORECASE
+            ):
+                continue
+            label = "Accuracy" if re.search(r"\baccuracy\b", equation_text, flags=re.IGNORECASE) else "Detected"
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"[PDF Equation | page={page_idx + 1} | label={label}]\n"
+                        f"{equation_text}"
+                    ),
+                    "page_idx": page_idx,
+                    "source": "pdf_text_layer",
+                }
+            )
+            break
     return blocks
 
 
@@ -601,6 +676,7 @@ async def process_with_rag(
     vision_target: Optional[str] = None,
     no_vision: bool = False,
     skip_kg_extraction: bool = False,
+    raise_on_failure: bool = False,
 ):
     try:
         parser_input = (parser or "mineru").strip().lower()
@@ -1043,7 +1119,9 @@ async def process_with_rag(
             t_init = perf_counter()
             config = RAGAnythingConfig(
                 working_dir=abs_working_dir,
-                parser="docling",
+                # PDF fast/hybrid path already extracts text/tables before insertion.
+                # Use a lightweight installed parser just to satisfy parser installation checks.
+                parser="paddleocr",
                 parse_method=parse_method,
                 enable_image_processing=True,
                 enable_table_processing=True,
@@ -1080,7 +1158,10 @@ async def process_with_rag(
                 "PDF fast extraction duration: %.2fs", perf_counter() - t_extract
             )
             if not fast_content:
-                logger.error("PDF fast extraction found no text content.")
+                err = RuntimeError("PDF fast extraction found no text content.")
+                logger.error(str(err))
+                if raise_on_failure:
+                    raise err
                 return
             combined_content = list(fast_content)
             if use_pdf_hybrid:
@@ -1095,6 +1176,12 @@ async def process_with_rag(
                     perf_counter() - t_table,
                 )
                 combined_content.extend(table_blocks)
+                equation_blocks = _extract_equation_blocks_from_text_blocks(fast_content)
+                combined_content.extend(equation_blocks)
+                logger.info(
+                    "PDF equation extraction from text layer: %s blocks",
+                    len(equation_blocks),
+                )
 
                 if (not no_vision) and _has_vision_provider(
                     api_key=api_key, base_url=base_url
@@ -1200,6 +1287,34 @@ async def process_with_rag(
                         "Vision provider not available; skipped PDF page visual descriptions."
                     )
 
+            type_counts: dict[str, int] = {}
+            marker_counts = {
+                "table_blocks": 0,
+                "equation_blocks": 0,
+                "visual_description_blocks": 0,
+                "text_blocks": 0,
+            }
+            for block in combined_content:
+                btype = str(block.get("type", "unknown"))
+                type_counts[btype] = type_counts.get(btype, 0) + 1
+                btext = str(block.get("text", "") or "")
+                if btype == "text":
+                    marker_counts["text_blocks"] += 1
+                if "[PDF Table" in btext:
+                    marker_counts["table_blocks"] += 1
+                if "[PDF Equation" in btext:
+                    marker_counts["equation_blocks"] += 1
+                if "[PDF Visual Description" in btext:
+                    marker_counts["visual_description_blocks"] += 1
+            logger.info("PDF hybrid content block types: %s", type_counts)
+            logger.info(
+                "PDF hybrid marker counts: text=%s table=%s equation=%s visual=%s",
+                marker_counts["text_blocks"],
+                marker_counts["table_blocks"],
+                marker_counts["equation_blocks"],
+                marker_counts["visual_description_blocks"],
+            )
+
             t_insert = perf_counter()
             await rag.insert_content_list(combined_content, file_path=abs_file_path)
             logger.info("Content insertion duration: %.2fs", perf_counter() - t_insert)
@@ -1256,9 +1371,12 @@ async def process_with_rag(
                 else:
                     ocr_text = _extract_text_from_image_with_paddleocr(abs_file_path)
                     if not ocr_text:
-                        logger.error(
+                        err = RuntimeError(
                             "OCR found no text in image; visual description requires a vision model."
                         )
+                        logger.error(str(err))
+                        if raise_on_failure:
+                            raise err
                         return
                     content_list = [{"type": "text", "text": ocr_text, "page_idx": 0}]
                     await rag.insert_content_list(content_list, file_path=abs_file_path)
@@ -1273,9 +1391,12 @@ async def process_with_rag(
                 try:
                     ocr_text = _extract_text_from_image_with_paddleocr(abs_file_path)
                     if not ocr_text:
-                        logger.error(
+                        err = RuntimeError(
                             "OCR found no text in image; visual description requires a vision model."
                         )
+                        logger.error(str(err))
+                        if raise_on_failure:
+                            raise err
                         return
                     content_list = [{"type": "text", "text": ocr_text, "page_idx": 0}]
                     await rag.insert_content_list(content_list, file_path=abs_file_path)
@@ -1408,6 +1529,10 @@ async def process_with_rag(
                 "2) .\\.venv\\Scripts\\python.exe -m pip install docling\n"
                 "If embedding fails on Gemini, set EMBEDDING_MODEL=gemini-embedding-001 and EMBEDDING_DIM=3072."
             )
+            if raise_on_failure:
+                if last_error is not None:
+                    raise RuntimeError(str(last_error)) from last_error
+                raise RuntimeError("Document processing failed without explicit exception.")
             return
 
         if skip_query:

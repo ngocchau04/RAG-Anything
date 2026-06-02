@@ -1,0 +1,66 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL_TO_PULL: ${OLLAMA_MODEL_TO_PULL:-nomic-embed-text}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -e; echo "Waiting for Ollama API..."; until ollama list >/dev/null 2>&1;
+        do sleep 2; done; echo "Pulling model $${OLLAMA_MODEL_TO_PULL}..."; ollama
+        pull "$${OLLAMA_MODEL_TO_PULL}" || echo "Warning: model pull failed. This can
+        happen with custom/local model aliases."; ollama list || true
+    restart: "no"
+
+  rag-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env.docker
+    environment:
+      WEBUI_HOST: ${WEBUI_HOST:-0.0.0.0}
+      WEBUI_PORT: ${WEBUI_PORT:-7860}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      EMBEDDING_BINDING: ${EMBEDDING_BINDING:-ollama}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./rag_storage:/app/rag_storage
+      - ./output:/app/output
+      - ./.tmp:/app/.tmp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${WEBUI_PORT:-7860}/ > /dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

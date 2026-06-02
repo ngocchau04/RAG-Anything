@@ -159,4 +159,19 @@ Lưu ý quan trọng:
 - Nếu cần phân tích hình cụ thể trong PDF, dùng phần **Analyze visual target** (ví dụ `Fig. 2`) hoặc `vision_page_range`.
 
 ---
+# Xem log tất cả services
+docker compose logs
+
+# Theo dõi log realtime
+docker compose logs -f
+
+# Chỉ xem log rag-webui
+docker compose logs rag-webui
+
+# Chỉ xem 200 dòng gần nhất của rag-webui
+docker compose logs --tail=200 rag-webui
+
+# Realtime + 200 dòng gần nhất
+docker compose logs -f --tail=200 rag-webui
+---
 *Chúc bạn trải nghiệm RAG-Anything phiên bản siêu việt một cách mượt mà nhất!*

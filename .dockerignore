@@ -1,0 +1,13 @@
+.venv/
+.git/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+rag_storage/
+output/
+.tmp/
+*.log
+.env
+.env.*
+!/.env.docker.example
