@@ -58,5 +58,5 @@ This stops containers and keeps your data.
 docker compose down -v
 ```
 
-Warning: `-v` removes Docker volumes, including `ollama_data`.  
+Warning: `-v` removes Docker volumes, including `ollama_data`.
 For bind-mounted folders (`rag_storage`, `output`, `.tmp`), files remain on host unless you delete them manually.

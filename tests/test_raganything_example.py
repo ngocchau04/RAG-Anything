@@ -749,6 +749,7 @@ async def test_pdf_hybrid_vision_target_adds_indexed_visual_description(
         lambda *a, **k: [{"type": "image", "img_path": "x.png", "page_idx": 3}],
     )
     monkeypatch.setattr(module, "_has_vision_provider", lambda *a, **k: True)
+
     async def fake_describe(*args, **kwargs):
         return "visual summary"
 
@@ -773,9 +774,10 @@ async def test_pdf_hybrid_vision_target_adds_indexed_visual_description(
     ]
     assert len(visual_blocks) == 1
     vb = visual_blocks[0]
-    assert "[PDF Visual Description | target=Fig. 2 | page=4 | source=vision]" in vb[
-        "text"
-    ]
+    assert (
+        "[PDF Visual Description | target=Fig. 2 | page=4 | source=vision]"
+        in vb["text"]
+    )
     assert vb["page_idx"] == 3
     assert vb["page_num"] == 4
     assert vb["target"] == "Fig. 2"
@@ -1604,7 +1606,9 @@ def test_route_query_asks_clarification_when_ambiguous(monkeypatch, tmp_path):
     ]
     docs, msg = service.route_query_to_documents("Summarize it")
     assert docs == []
-    assert msg == "I found multiple indexed files. Which file would you like to ask about?"
+    assert (
+        msg == "I found multiple indexed files. Which file would you like to ask about?"
+    )
 
 
 @pytest.mark.asyncio
@@ -1673,7 +1677,9 @@ async def test_vlm_503_falls_back_to_indexed_description(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_webui_image_query_uses_indexed_description_by_default(monkeypatch, tmp_path):
+async def test_webui_image_query_uses_indexed_description_by_default(
+    monkeypatch, tmp_path
+):
     module = _load_webui_module()
     monkeypatch.setattr(module, "REGISTRY_PATH", tmp_path / "webui_registry.json")
     monkeypatch.setattr(module, "UPLOADS_DIR", tmp_path / "uploads")
@@ -1864,7 +1870,9 @@ def test_chat_routes_by_filename_overrides_selected(monkeypatch, tmp_path):
     assert docs[0].doc_id == "d1"
 
 
-def test_chat_asks_clarification_when_ambiguous_without_selection(monkeypatch, tmp_path):
+def test_chat_asks_clarification_when_ambiguous_without_selection(
+    monkeypatch, tmp_path
+):
     module = _load_webui_module()
     monkeypatch.setattr(module, "REGISTRY_PATH", tmp_path / "webui_registry.json")
     monkeypatch.setattr(module, "UPLOADS_DIR", tmp_path / "uploads")
@@ -1876,7 +1884,9 @@ def test_chat_asks_clarification_when_ambiguous_without_selection(monkeypatch, t
     ]
     docs, msg = service.route_query_to_documents("what is this picture about?")
     assert docs == []
-    assert msg == "I found multiple indexed files. Which file would you like to ask about?"
+    assert (
+        msg == "I found multiple indexed files. Which file would you like to ask about?"
+    )
 
 
 def test_default_llm_model_is_gemini_31_flash_lite(monkeypatch):
