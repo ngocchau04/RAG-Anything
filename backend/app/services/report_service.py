@@ -126,6 +126,7 @@ def generate_pdf_report_action(
     assert doc is not None
 
     try:
+
         def _query_func(question_text: str, rec: DocumentRecord) -> str:
             return service.run(
                 service.query_existing_document(

@@ -48,7 +48,9 @@ async def upload_document(file: UploadFile = File(None)):
 def index_document(doc_id: str):
     try:
         service = DocumentLifecycleService(get_default_paths())
-        result = asyncio.run(service.index_document_by_id(doc_id, force_reprocess=False))
+        result = asyncio.run(
+            service.index_document_by_id(doc_id, force_reprocess=False)
+        )
         if result.get("status_code") == 404:
             return JSONResponse(
                 content={k: v for k, v in result.items() if k != "status_code"},

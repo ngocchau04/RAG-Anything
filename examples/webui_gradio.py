@@ -29,25 +29,16 @@ from backend.app.services.document_service import (
 )
 from backend.app.services.indexing_service import (
     IndexingServiceMixin,
-    detect_parser_for_file,
-    index_artifact_status as _index_artifact_status,
-    read_doc_status_error as _read_doc_status_error,
-    safe_filename as _safe_filename,
+    detect_parser_for_file as _detect_parser_for_file,
     sha256_file as _sha256_file,
 )
 from backend.app.services.query_service import (
     QueryServiceMixin,
     append_messages as _append_messages,
-    detect_special_pdf_question as _detect_special_pdf_question,
-    extract_candidate_filenames as _extract_candidate_filenames,
-    is_marker_only_answer as _is_marker_only_answer,
-    normalize_to_messages as _normalize_to_messages,
-    rewrite_pdf_special_query as _rewrite_pdf_special_query,
 )
 from backend.app.services.report_service import (
     export_chat_history_action,
     export_current_answer_action,
-    format_pdf_export_result as _format_pdf_export_result,
     generate_pdf_report_action,
     parse_doc_id_from_label as _parse_doc_id_from_label,
     parse_doc_label as _parse_doc_label,
@@ -94,6 +85,10 @@ def _is_index_ready(working_dir: str) -> bool:
     return is_index_ready(working_dir)
 
 
+def detect_parser_for_file(file_path: str) -> str:
+    return _detect_parser_for_file(file_path)
+
+
 class WebUIRAGService(DocumentServiceMixin, QueryServiceMixin, IndexingServiceMixin):
     def __init__(self):
         self.state = UIState()
@@ -118,7 +113,9 @@ class WebUIRAGService(DocumentServiceMixin, QueryServiceMixin, IndexingServiceMi
 
         self.llm_model = os.getenv("LLM_MODEL", "gemini-3.1-flash-lite")
         self.llm_model_source = (
-            "env:LLM_MODEL" if os.getenv("LLM_MODEL") else "default:gemini-3.1-flash-lite"
+            "env:LLM_MODEL"
+            if os.getenv("LLM_MODEL")
+            else "default:gemini-3.1-flash-lite"
         )
         self.vision_model = os.getenv("VISION_MODEL", "gemini-3.1-flash-lite")
         self.vision_model_source = (
@@ -330,7 +327,9 @@ def build_webui():
 
             with gr.Column(scale=2):
                 try:
-                    chatbot = gr.Chatbot(label="Chat", type="messages", elem_id="chatbot")
+                    chatbot = gr.Chatbot(
+                        label="Chat", type="messages", elem_id="chatbot"
+                    )
                 except TypeError:
                     chatbot = gr.Chatbot(label="Chat", elem_id="chatbot")
                 question = gr.Textbox(label="Your question", elem_id="chat_question")
@@ -343,7 +342,9 @@ def build_webui():
         last_source_state = gr.State("")
 
         def refresh_doc_choices():
-            choices = [f"{r.original_filename} [{r.doc_id}]" for r in service.list_documents()]
+            choices = [
+                f"{r.original_filename} [{r.doc_id}]" for r in service.list_documents()
+            ]
             first = choices[0] if choices else None
             return (
                 gr.update(choices=choices, value=first),
@@ -439,7 +440,13 @@ def build_webui():
                 )
             )
             out = _append_messages(chat_history, user_q, answer)
-            return out, out, str(user_q or ""), str(answer or ""), _parse_doc_label(selected_doc) or ""
+            return (
+                out,
+                out,
+                str(user_q or ""),
+                str(answer or ""),
+                _parse_doc_label(selected_doc) or "",
+            )
 
         def on_clear():
             return [], [], "", "", ""
@@ -493,7 +500,14 @@ def build_webui():
                 vision_page_range,
                 max_vision_pages,
             ],
-            [process_status, indexed_files, visual_doc, registry_view, chatbot, history_state],
+            [
+                process_status,
+                indexed_files,
+                visual_doc,
+                registry_view,
+                chatbot,
+                history_state,
+            ],
         )
         reprocess_btn.click(
             on_reprocess,
@@ -517,12 +531,24 @@ def build_webui():
         ask_btn.click(
             on_ask,
             [question, history_state, indexed_files, use_direct_vlm_on_query],
-            [chatbot, history_state, last_question_state, last_answer_state, last_source_state],
+            [
+                chatbot,
+                history_state,
+                last_question_state,
+                last_answer_state,
+                last_source_state,
+            ],
         )
         clear_btn.click(
             on_clear,
             [],
-            [chatbot, history_state, last_question_state, last_answer_state, last_source_state],
+            [
+                chatbot,
+                history_state,
+                last_question_state,
+                last_answer_state,
+                last_source_state,
+            ],
         )
         analyze_btn.click(
             on_analyze,

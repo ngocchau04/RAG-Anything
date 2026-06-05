@@ -8,7 +8,9 @@ from pathlib import Path
 
 def _load_webui_module():
     module_path = Path(__file__).resolve().parents[1] / "examples" / "webui_gradio.py"
-    spec = importlib.util.spec_from_file_location("webui_gradio_docker_tests", module_path)
+    spec = importlib.util.spec_from_file_location(
+        "webui_gradio_docker_tests", module_path
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     sys.modules[spec.name] = module
@@ -155,7 +157,9 @@ def test_docker_storage_root_resolves_paths(monkeypatch):
     )
     svc = module.WebUIRAGService.__new__(module.WebUIRAGService)
     resolved = module.WebUIRAGService._resolve_rel(svc, "webui_docs/doc123")
-    assert str(resolved).replace("\\", "/").endswith("/app/rag_storage/webui_docs/doc123")
+    assert (
+        str(resolved).replace("\\", "/").endswith("/app/rag_storage/webui_docs/doc123")
+    )
 
 
 def test_duplicate_hash_with_invalid_index_reprocesses(tmp_path, monkeypatch):
@@ -249,7 +253,9 @@ def test_force_reprocess_does_not_skip_duplicate_hash(tmp_path, monkeypatch):
         (wd / "kv_store_text_chunks.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(rx, "process_with_rag", _ok)
-    result = service.run(service._process_single_document(str(img), force_reprocess=True))
+    result = service.run(
+        service._process_single_document(str(img), force_reprocess=True)
+    )
     assert "Skipped duplicate:" not in result
     assert result.startswith("Indexed:")
 
@@ -381,7 +387,9 @@ def test_delete_document_removes_registry_and_working_dir(tmp_path, monkeypatch)
     assert service.registry == []
 
 
-def test_content_already_exists_error_not_triggered_after_reprocess(tmp_path, monkeypatch):
+def test_content_already_exists_error_not_triggered_after_reprocess(
+    tmp_path, monkeypatch
+):
     module = _load_webui_module()
     rag_root = tmp_path / "rag_storage"
     uploads = rag_root / "webui_uploads"
@@ -430,7 +438,11 @@ def test_content_already_exists_error_not_triggered_after_reprocess(tmp_path, mo
 
 def test_query_parser_fallback_avoids_missing_docling(monkeypatch):
     module = _load_webui_module()
-    monkeypatch.setattr(module, "get_parser", lambda _: type("P", (), {"check_installation": lambda self: False})())
+    monkeypatch.setattr(
+        module,
+        "get_parser",
+        lambda _: type("P", (), {"check_installation": lambda self: False})(),
+    )
     assert module.WebUIRAGService._resolve_query_parser("docling") == "paddleocr"
 
 
@@ -524,11 +536,15 @@ def test_docx_dependency_available_or_clear_error(tmp_path, monkeypatch):
     from examples import raganything_example as rx
 
     async def _boom(*args, **kwargs):
-        raise RuntimeError("simple_docx requires docling, but docling is not installed in Docker.")
+        raise RuntimeError(
+            "simple_docx requires docling, but docling is not installed in Docker."
+        )
 
     monkeypatch.setattr(rx, "process_with_rag", _boom)
     monkeypatch.setattr(module, "_sha256_file", lambda _: "h1")
-    result = service.run(service._process_single_document(str(f), force_parser="simple_docx"))
+    result = service.run(
+        service._process_single_document(str(f), force_parser="simple_docx")
+    )
     assert "Indexing failed for a.docx:" in result
     assert "docling" in result.lower()
 
@@ -553,7 +569,9 @@ def test_process_failure_surfaces_real_exception(tmp_path, monkeypatch):
 
     monkeypatch.setattr(rx, "process_with_rag", _boom)
     monkeypatch.setattr(module, "_sha256_file", lambda _: "h2")
-    result = service.run(service._process_single_document(str(f), force_parser="pdf_hybrid"))
+    result = service.run(
+        service._process_single_document(str(f), force_parser="pdf_hybrid")
+    )
     assert "missing dependency pymupdf in Docker" in result
 
 
@@ -580,12 +598,16 @@ def test_process_success_creates_working_dir(tmp_path, monkeypatch):
         (wd / "kv_store_text_chunks.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(rx, "process_with_rag", _ok)
-    result = service.run(service._process_single_document(str(f), force_parser="pdf_hybrid"))
+    result = service.run(
+        service._process_single_document(str(f), force_parser="pdf_hybrid")
+    )
     assert result.startswith("Indexed:")
     assert service.registry[-1].status == "indexed"
 
 
-def test_process_success_but_missing_working_dir_reports_specific_bug(tmp_path, monkeypatch):
+def test_process_success_but_missing_working_dir_reports_specific_bug(
+    tmp_path, monkeypatch
+):
     module = _load_webui_module()
     rag_root = tmp_path / "rag_storage"
     uploads = rag_root / "webui_uploads"
@@ -605,8 +627,12 @@ def test_process_success_but_missing_working_dir_reports_specific_bug(tmp_path, 
         return None
 
     monkeypatch.setattr(rx, "process_with_rag", _ok_no_artifacts)
-    result = service.run(service._process_single_document(str(f), force_parser="pdf_hybrid"))
-    assert "process completed but working_dir index artifacts were not created" in result
+    result = service.run(
+        service._process_single_document(str(f), force_parser="pdf_hybrid")
+    )
+    assert (
+        "process completed but working_dir index artifacts were not created" in result
+    )
 
 
 def test_process_failure_surfaces_quota_error_from_doc_status(tmp_path, monkeypatch):
@@ -634,11 +660,15 @@ def test_process_failure_surfaces_quota_error_from_doc_status(tmp_path, monkeypa
                 "error_msg": "RESOURCE_EXHAUSTED quota exceeded 429",
             }
         }
-        (wd / "kv_store_doc_status.json").write_text(json.dumps(payload), encoding="utf-8")
+        (wd / "kv_store_doc_status.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
         return None
 
     monkeypatch.setattr(rx, "process_with_rag", _writes_status_then_returns)
-    result = service.run(service._process_single_document(str(f), force_parser="simple_docx"))
+    result = service.run(
+        service._process_single_document(str(f), force_parser="simple_docx")
+    )
     assert "LLM quota exceeded" in result
 
 
@@ -680,6 +710,7 @@ def test_table_question_retrieves_table_block(tmp_path, monkeypatch):
         source_metadata={},
         visual_targets=[],
     )
+
     class _R:
         async def aquery(self, question, mode="hybrid", vlm_enhanced=False):
             return "References\n[PDF Table | label=Table 1 | page=9]"
@@ -730,6 +761,7 @@ def test_equation_question_retrieves_equation_block(tmp_path, monkeypatch):
         source_metadata={},
         visual_targets=[],
     )
+
     class _R:
         async def aquery(self, question, mode="hybrid", vlm_enhanced=False):
             return "[PDF Equation | label=Accuracy | page=3]"
@@ -779,6 +811,7 @@ def test_equation_answer_only_strips_source_prefix(tmp_path, monkeypatch):
         source_metadata={},
         visual_targets=[],
     )
+
     class _R:
         async def aquery(self, question, mode="hybrid", vlm_enhanced=False):
             return "[PDF Equation | label=Accuracy | page=3]"
@@ -829,6 +862,7 @@ def test_figure_question_retrieves_visual_description_block(tmp_path, monkeypatc
         source_metadata={},
         visual_targets=[],
     )
+
     class _R:
         async def aquery(self, question, mode="hybrid", vlm_enhanced=False):
             return "[PDF Visual Description | target=Fig. 2 | page=4 | source=vision]"

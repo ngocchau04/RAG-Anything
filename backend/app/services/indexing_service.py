@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
-import random
 import shutil
 import time
 import traceback
@@ -23,7 +21,10 @@ from raganything.config import resolve_embedding_runtime_config
 
 from backend.app.schemas.document import UIState
 from backend.app.schemas.document import DocumentRecord
-from backend.app.services.document_service import DocumentRegistryService, is_index_ready
+from backend.app.services.document_service import (
+    DocumentRegistryService,
+    is_index_ready,
+)
 
 
 def safe_filename(name: str) -> str:
@@ -62,7 +63,8 @@ def detect_parser_for_file(file_path: str) -> str:
 def index_artifact_status(working_dir: str) -> dict[str, Any]:
     wd = Path(working_dir)
     files = {
-        "graph_chunk_entity_relation.graphml": wd / "graph_chunk_entity_relation.graphml",
+        "graph_chunk_entity_relation.graphml": wd
+        / "graph_chunk_entity_relation.graphml",
         "vdb_chunks.json": wd / "vdb_chunks.json",
         "kv_store_text_chunks.json": wd / "kv_store_text_chunks.json",
     }
@@ -101,7 +103,9 @@ def read_doc_status_error(working_dir: str, filename: str) -> Optional[str]:
             continue
         status = str(item.get("status", "")).lower()
         if status in {"failed", "error"}:
-            return str(item.get("error_msg", "") or "").strip() or "document status failed"
+            return (
+                str(item.get("error_msg", "") or "").strip() or "document status failed"
+            )
     return None
 
 
@@ -290,12 +294,16 @@ class IndexingServiceMixin:
             )
             content = content[:max_chars]
 
-        rag = await self._create_rag(working_dir=str(workdir.resolve()), parser="paddleocr")
+        rag = await self._create_rag(
+            working_dir=str(workdir.resolve()), parser="paddleocr"
+        )
         init_result = await rag._ensure_lightrag_initialized()
         if not init_result or not init_result.get("success"):
             detail = (init_result or {}).get("error", "unknown error")
             raise RuntimeError(f"LightRAG init failed for DOCX fallback: {detail}")
-        await rag.insert_content_list([{"type": "text", "text": content, "page_idx": 0}], file_path=file_path)
+        await rag.insert_content_list(
+            [{"type": "text", "text": content, "page_idx": 0}], file_path=file_path
+        )
 
     def _persist_upload_file(self, file_path: str, doc_id: str) -> str:
         self.paths.uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -418,9 +426,7 @@ class IndexingServiceMixin:
         record = DocumentRecord(
             doc_id=doc_id,
             original_filename=src.name,
-            stored_file_rel=self._as_rel(
-                Path(stored_path), self.paths.storage_root
-            ),
+            stored_file_rel=self._as_rel(Path(stored_path), self.paths.storage_root),
             working_dir_rel=self._as_rel(workdir, self.paths.storage_root),
             file_type=src.suffix.lower(),
             parser=parser,
@@ -555,6 +561,7 @@ class IndexingServiceMixin:
             if file_type == ".docx" and parser_for_run == "simple_docx":
                 try:
                     import docling  # type: ignore  # noqa: F401
+
                     docling_available = True
                 except Exception:
                     docling_available = False
@@ -677,15 +684,23 @@ class IndexingServiceMixin:
             return f"Indexing failed for {src.name}: {exc}"
 
         artifact_status = index_artifact_status(str(workdir.resolve()))
-        logger.info("Working dir exists after process: %s", artifact_status["working_dir_exists"])
-        logger.info("Working dir contents after process: %s", artifact_status["dir_entries"])
+        logger.info(
+            "Working dir exists after process: %s",
+            artifact_status["working_dir_exists"],
+        )
+        logger.info(
+            "Working dir contents after process: %s", artifact_status["dir_entries"]
+        )
         logger.info("Index artifact status: %s", artifact_status["files"])
 
         if not self._is_index_ready(str(workdir.resolve())):
             status_err = read_doc_status_error(str(workdir.resolve()), src.name)
             if status_err:
                 lowered = status_err.lower()
-                if any(k in lowered for k in ["quota", "resource_exhausted", "rate limit", "429"]):
+                if any(
+                    k in lowered
+                    for k in ["quota", "resource_exhausted", "rate limit", "429"]
+                ):
                     err = (
                         "LLM quota exceeded while extracting entities/chunks. "
                         "Try again later or reduce document size via WEBUI_DOCX_MAX_CHARS "
@@ -727,9 +742,7 @@ class IndexingServiceMixin:
         record = DocumentRecord(
             doc_id=doc_id,
             original_filename=src.name,
-            stored_file_rel=self._as_rel(
-                Path(stored_path), self.paths.storage_root
-            ),
+            stored_file_rel=self._as_rel(Path(stored_path), self.paths.storage_root),
             working_dir_rel=self._as_rel(workdir, self.paths.storage_root),
             file_type=src.suffix.lower(),
             parser="pdf_hybrid" if parser == "pdf_fast" else parser,
@@ -956,7 +969,9 @@ class DocumentLifecycleService(DocumentRegistryService, IndexingServiceMixin):
             "message": "Document uploaded successfully.",
         }
 
-    async def index_document_by_id(self, doc_id: str, *, force_reprocess: bool = False) -> dict[str, Any]:
+    async def index_document_by_id(
+        self, doc_id: str, *, force_reprocess: bool = False
+    ) -> dict[str, Any]:
         rec = self._find_by_id(doc_id)
         if rec is None:
             return {

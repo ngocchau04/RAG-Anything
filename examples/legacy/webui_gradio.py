@@ -102,7 +102,8 @@ def _is_index_ready(working_dir: str) -> bool:
 def _index_artifact_status(working_dir: str) -> dict[str, Any]:
     wd = Path(working_dir)
     files = {
-        "graph_chunk_entity_relation.graphml": wd / "graph_chunk_entity_relation.graphml",
+        "graph_chunk_entity_relation.graphml": wd
+        / "graph_chunk_entity_relation.graphml",
         "vdb_chunks.json": wd / "vdb_chunks.json",
         "kv_store_text_chunks.json": wd / "kv_store_text_chunks.json",
     }
@@ -141,7 +142,9 @@ def _read_doc_status_error(working_dir: str, filename: str) -> Optional[str]:
             continue
         status = str(item.get("status", "")).lower()
         if status in {"failed", "error"}:
-            return str(item.get("error_msg", "") or "").strip() or "document status failed"
+            return (
+                str(item.get("error_msg", "") or "").strip() or "document status failed"
+            )
     return None
 
 
@@ -230,7 +233,9 @@ def _is_marker_only_answer(text: str) -> bool:
     lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
     if not lines:
         return False
-    if len(lines) == 1 and re.match(r"^\[PDF (Equation|Table|Visual Description)\b.*\]$", lines[0]):
+    if len(lines) == 1 and re.match(
+        r"^\[PDF (Equation|Table|Visual Description)\b.*\]$", lines[0]
+    ):
         return True
     return False
 
@@ -416,7 +421,9 @@ class RegistryStore:
         stored_rel = item.get("stored_file_rel")
         working_rel = item.get("working_dir_rel")
         if not stored_rel:
-            stored_rel = self._path_to_rel(item.get("stored_file_path"), "webui_uploads")
+            stored_rel = self._path_to_rel(
+                item.get("stored_file_path"), "webui_uploads"
+            )
             migrated = migrated or bool(stored_rel)
         if not working_rel:
             working_rel = self._path_to_rel(item.get("working_dir"), "webui_docs")
@@ -510,7 +517,9 @@ class WebUIRAGService:
 
         self.llm_model = os.getenv("LLM_MODEL", "gemini-3.1-flash-lite")
         self.llm_model_source = (
-            "env:LLM_MODEL" if os.getenv("LLM_MODEL") else "default:gemini-3.1-flash-lite"
+            "env:LLM_MODEL"
+            if os.getenv("LLM_MODEL")
+            else "default:gemini-3.1-flash-lite"
         )
         self.vision_model = os.getenv("VISION_MODEL", "gemini-3.1-flash-lite")
         self.vision_model_source = (
@@ -677,17 +686,35 @@ class WebUIRAGService:
             wants_accuracy = "accuracy" in q
             wants_roc = "roc" in q
             table_num_match = re.search(r"\btable\s*(\d+)\b", q)
-            wanted_table_num = int(table_num_match.group(1)) if table_num_match else None
+            wanted_table_num = (
+                int(table_num_match.group(1)) if table_num_match else None
+            )
             terms = [
                 t
                 for t in re.findall(r"[a-zA-Z0-9_.+-]+", q)
-                if t not in {"in", "the", "what", "are", "for", "at", "from", "table", "answer", "only"}
+                if t
+                not in {
+                    "in",
+                    "the",
+                    "what",
+                    "are",
+                    "for",
+                    "at",
+                    "from",
+                    "table",
+                    "answer",
+                    "only",
+                }
             ]
             scored_chunks: list[tuple[int, str]] = []
             for chunk in chunks:
                 score = 0
                 if wanted_table_num is not None:
-                    m = re.search(r"\[PDF Table\s*\|\s*label=Table\s+(\d+)\s*\|", chunk, flags=re.IGNORECASE)
+                    m = re.search(
+                        r"\[PDF Table\s*\|\s*label=Table\s+(\d+)\s*\|",
+                        chunk,
+                        flags=re.IGNORECASE,
+                    )
                     if m and int(m.group(1)) == wanted_table_num:
                         score += 1000
                 if "references" in chunk.lower() or "subset 1" in chunk.lower():
@@ -697,7 +724,9 @@ class WebUIRAGService:
             scored_chunks.sort(key=lambda x: x[0], reverse=True)
             for _, chunk in scored_chunks:
                 lines = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
-                table_lines = [ln for ln in lines if ln.startswith("|") and ln.endswith("|")]
+                table_lines = [
+                    ln for ln in lines if ln.startswith("|") and ln.endswith("|")
+                ]
                 if not table_lines:
                     continue
                 # Parse markdown table to extract requested columns from best-matching row.
@@ -723,13 +752,17 @@ class WebUIRAGService:
                             best_cells = cells
                     if best_cells is not None and best_score > 0:
                         col_map = {
-                            h.strip().lower(): i for i, h in enumerate(header) if h.strip()
+                            h.strip().lower(): i
+                            for i, h in enumerate(header)
+                            if h.strip()
                         }
                         out_parts: list[str] = []
                         if wants_accuracy:
                             for k in ["accuracy", "acc"]:
                                 if k in col_map and col_map[k] < len(best_cells):
-                                    out_parts.append(f"Accuracy: {best_cells[col_map[k]]}")
+                                    out_parts.append(
+                                        f"Accuracy: {best_cells[col_map[k]]}"
+                                    )
                                     break
                         if wants_roc:
                             for k in ["roc", "auc", "roc-auc"]:
@@ -840,12 +873,16 @@ class WebUIRAGService:
             )
             content = content[:max_chars]
 
-        rag = await self._create_rag(working_dir=str(workdir.resolve()), parser="paddleocr")
+        rag = await self._create_rag(
+            working_dir=str(workdir.resolve()), parser="paddleocr"
+        )
         init_result = await rag._ensure_lightrag_initialized()
         if not init_result or not init_result.get("success"):
             detail = (init_result or {}).get("error", "unknown error")
             raise RuntimeError(f"LightRAG init failed for DOCX fallback: {detail}")
-        await rag.insert_content_list([{"type": "text", "text": content, "page_idx": 0}], file_path=file_path)
+        await rag.insert_content_list(
+            [{"type": "text", "text": content, "page_idx": 0}], file_path=file_path
+        )
 
     def _persist_upload_file(self, file_path: str, doc_id: str) -> str:
         UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1064,6 +1101,7 @@ class WebUIRAGService:
             if file_type == ".docx" and parser_for_run == "simple_docx":
                 try:
                     import docling  # type: ignore  # noqa: F401
+
                     docling_available = True
                 except Exception:
                     docling_available = False
@@ -1187,15 +1225,23 @@ class WebUIRAGService:
             return f"Indexing failed for {src.name}: {exc}"
 
         artifact_status = _index_artifact_status(str(workdir.resolve()))
-        logger.info("Working dir exists after process: %s", artifact_status["working_dir_exists"])
-        logger.info("Working dir contents after process: %s", artifact_status["dir_entries"])
+        logger.info(
+            "Working dir exists after process: %s",
+            artifact_status["working_dir_exists"],
+        )
+        logger.info(
+            "Working dir contents after process: %s", artifact_status["dir_entries"]
+        )
         logger.info("Index artifact status: %s", artifact_status["files"])
 
         if not _is_index_ready(str(workdir.resolve())):
             status_err = _read_doc_status_error(str(workdir.resolve()), src.name)
             if status_err:
                 lowered = status_err.lower()
-                if any(k in lowered for k in ["quota", "resource_exhausted", "rate limit", "429"]):
+                if any(
+                    k in lowered
+                    for k in ["quota", "resource_exhausted", "rate limit", "429"]
+                ):
                     err = (
                         "LLM quota exceeded while extracting entities/chunks. "
                         "Try again later or reduce document size via WEBUI_DOCX_MAX_CHARS "
@@ -1413,7 +1459,10 @@ class WebUIRAGService:
 
         if len(docs) == 1:
             return docs, None
-        return [], "I found multiple indexed files. Which file would you like to ask about?"
+        return (
+            [],
+            "I found multiple indexed files. Which file would you like to ask about?",
+        )
 
     async def load_rag_for_existing_index(self, rec: DocumentRecord) -> RAGAnything:
         ok, reason = self._record_index_status(rec)
@@ -1429,7 +1478,11 @@ class WebUIRAGService:
             )
         working_dir = str(self._resolve_record_working_dir(rec))
         if rec.doc_id not in self.rag_cache:
-            preferred = rec.parser if rec.parser in SUPPORTED_QUERY_LOAD_PARSERS else "paddleocr"
+            preferred = (
+                rec.parser
+                if rec.parser in SUPPORTED_QUERY_LOAD_PARSERS
+                else "paddleocr"
+            )
             parser_for_load = self._resolve_query_parser(preferred)
             logger.info(
                 "Query-only mode: loading existing index for %s from %s",
@@ -1445,8 +1498,7 @@ class WebUIRAGService:
             if not init_result or not init_result.get("success"):
                 detail = (init_result or {}).get("error", "unknown error")
                 raise RuntimeError(
-                    f"LightRAG init failed for "
-                    f"{rec.original_filename}: {detail}"
+                    f"LightRAG init failed for " f"{rec.original_filename}: {detail}"
                 )
             self.rag_cache[rec.doc_id] = rag
         return self.rag_cache[rec.doc_id]
@@ -1490,22 +1542,18 @@ class WebUIRAGService:
             answer = str(result) if result is not None else "No answer was returned."
             if special_kind and marker_chunks:
                 lowered = answer.lower()
-                looks_bad_table = (
-                    special_kind == "table"
-                    and (
-                        "references" in lowered
-                        or "subset 1" in lowered
-                        or "[pdf table" in lowered
-                    )
+                looks_bad_table = special_kind == "table" and (
+                    "references" in lowered
+                    or "subset 1" in lowered
+                    or "[pdf table" in lowered
                 )
-                looks_bad_equation = (
-                    special_kind == "equation"
-                    and (
-                        "[pdf equation" in lowered
-                        or ("accuracy" in lowered and ("tp + tn + fp + fn" not in lowered))
-                    )
+                looks_bad_equation = special_kind == "equation" and (
+                    "[pdf equation" in lowered
+                    or ("accuracy" in lowered and ("tp + tn + fp + fn" not in lowered))
                 )
-                looks_bad_figure = special_kind == "figure" and "[pdf visual description" in lowered
+                looks_bad_figure = (
+                    special_kind == "figure" and "[pdf visual description" in lowered
+                )
                 if looks_bad_table or looks_bad_equation or looks_bad_figure:
                     marker_answer = self._format_marker_answer(
                         special_kind, marker_chunks, question
@@ -1571,7 +1619,11 @@ class WebUIRAGService:
         if len(routed_docs) == 1:
             rec = routed_docs[0]
             try:
-                source_prefix = "Answer based on selected file" if selected_doc_id else "Answer based on"
+                source_prefix = (
+                    "Answer based on selected file"
+                    if selected_doc_id
+                    else "Answer based on"
+                )
                 answer = await self.query_existing_document(
                     question,
                     rec,
@@ -1696,7 +1748,9 @@ def _parse_doc_id_from_label(value: Optional[str]) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def _format_pdf_export_result(status: str, pdf_path: Optional[Path]) -> tuple[str, Optional[str]]:
+def _format_pdf_export_result(
+    status: str, pdf_path: Optional[Path]
+) -> tuple[str, Optional[str]]:
     return status, (str(pdf_path) if pdf_path else None)
 
 
@@ -1787,6 +1841,7 @@ def generate_pdf_report_action(
     assert doc is not None
 
     try:
+
         def _query_func(question_text: str, rec: DocumentRecord) -> str:
             return service.run(
                 service.query_existing_document(
@@ -1910,7 +1965,9 @@ def build_webui():
 
             with gr.Column(scale=2):
                 try:
-                    chatbot = gr.Chatbot(label="Chat", type="messages", elem_id="chatbot")
+                    chatbot = gr.Chatbot(
+                        label="Chat", type="messages", elem_id="chatbot"
+                    )
                 except TypeError:
                     chatbot = gr.Chatbot(label="Chat", elem_id="chatbot")
                 question = gr.Textbox(label="Your question", elem_id="chat_question")
@@ -1923,7 +1980,9 @@ def build_webui():
         last_source_state = gr.State("")
 
         def refresh_doc_choices():
-            choices = [f"{r.original_filename} [{r.doc_id}]" for r in service.list_documents()]
+            choices = [
+                f"{r.original_filename} [{r.doc_id}]" for r in service.list_documents()
+            ]
             first = choices[0] if choices else None
             return (
                 gr.update(choices=choices, value=first),
@@ -2019,7 +2078,13 @@ def build_webui():
                 )
             )
             out = _append_messages(chat_history, user_q, answer)
-            return out, out, str(user_q or ""), str(answer or ""), _parse_doc_label(selected_doc) or ""
+            return (
+                out,
+                out,
+                str(user_q or ""),
+                str(answer or ""),
+                _parse_doc_label(selected_doc) or "",
+            )
 
         def on_clear():
             return [], [], "", "", ""
@@ -2073,7 +2138,14 @@ def build_webui():
                 vision_page_range,
                 max_vision_pages,
             ],
-            [process_status, indexed_files, visual_doc, registry_view, chatbot, history_state],
+            [
+                process_status,
+                indexed_files,
+                visual_doc,
+                registry_view,
+                chatbot,
+                history_state,
+            ],
         )
         reprocess_btn.click(
             on_reprocess,
@@ -2097,12 +2169,24 @@ def build_webui():
         ask_btn.click(
             on_ask,
             [question, history_state, indexed_files, use_direct_vlm_on_query],
-            [chatbot, history_state, last_question_state, last_answer_state, last_source_state],
+            [
+                chatbot,
+                history_state,
+                last_question_state,
+                last_answer_state,
+                last_source_state,
+            ],
         )
         clear_btn.click(
             on_clear,
             [],
-            [chatbot, history_state, last_question_state, last_answer_state, last_source_state],
+            [
+                chatbot,
+                history_state,
+                last_question_state,
+                last_answer_state,
+                last_source_state,
+            ],
         )
         analyze_btn.click(
             on_analyze,

@@ -50,7 +50,9 @@ class RegistryStore:
         stored_rel = item.get("stored_file_rel")
         working_rel = item.get("working_dir_rel")
         if not stored_rel:
-            stored_rel = self._path_to_rel(item.get("stored_file_path"), "webui_uploads")
+            stored_rel = self._path_to_rel(
+                item.get("stored_file_path"), "webui_uploads"
+            )
             migrated = migrated or bool(stored_rel)
         if not working_rel:
             working_rel = self._path_to_rel(item.get("working_dir"), "webui_docs")
@@ -138,7 +140,9 @@ class DocumentServiceMixin:
             "working_dir_rel": rec.working_dir_rel,
             "created_at": created_at,
             "updated_at": created_at,
-            "error_message": DocumentServiceMixin._sanitize_error_text(rec.error_message),
+            "error_message": DocumentServiceMixin._sanitize_error_text(
+                rec.error_message
+            ),
             "needs_reprocess": bool(rec.needs_reprocess),
         }
 

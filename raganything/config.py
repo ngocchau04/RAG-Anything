@@ -228,7 +228,9 @@ def resolve_embedding_runtime_config(
         ollama_host=host,
         provider_source=provider_source,
         model_source=(
-            "env:EMBEDDING_MODEL" if model_raw else "default:openai(text-embedding-3-large)"
+            "env:EMBEDDING_MODEL"
+            if model_raw
+            else "default:openai(text-embedding-3-large)"
         ),
         dim_source=("env:EMBEDDING_DIM" if dim_raw else "default:openai(3072)"),
         host_source=(

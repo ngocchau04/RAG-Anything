@@ -17,6 +17,7 @@ DEFAULT_WINDOWS_BOLD_FONT = Path(r"C:\Windows\Fonts\arialbd.ttf")
 FONT_REGULAR_NAME = "RAGAnythingUnicode"
 FONT_BOLD_NAME = "RAGAnythingUnicodeBold"
 
+
 def _safe_stem(prefix: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", prefix).strip("_") or "report"
 
@@ -116,7 +117,9 @@ def _render_lines_for_pdf(content: str, max_chars: int = 95) -> list[str]:
             out_lines.append(line)
             continue
         # Keep equation lines intact when possible.
-        if "=" in line and any(k in line.lower() for k in ["tp", "tn", "fp", "fn", "accuracy", "roc"]):
+        if "=" in line and any(
+            k in line.lower() for k in ["tp", "tn", "fp", "fn", "accuracy", "roc"]
+        ):
             out_lines.extend(_wrap_text(line, max_chars=max_chars))
             continue
         out_lines.extend(_wrap_text(line, max_chars=max_chars))

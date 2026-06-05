@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from pathlib import Path
@@ -16,7 +16,9 @@ def infer_language(text: str) -> str:
     if re.search(r"[ăâđêôơưĂÂĐÊÔƠƯ]", raw):
         return "vi"
     lowered = raw.lower()
-    if any(token in lowered for token in ["tóm tắt", "báo cáo", "tiếng việt", "tài liệu"]):
+    if any(
+        token in lowered for token in ["tóm tắt", "báo cáo", "tiếng việt", "tài liệu"]
+    ):
         return "vi"
     return "en"
 
@@ -33,11 +35,20 @@ def _strip_source_reference_lines(text: str) -> str:
         lowered = line.lower()
         if lowered.startswith("source:") or lowered.startswith("source file:"):
             continue
-        if lowered in {"references", "references / source notes", "reference", "ghi chú nguồn"}:
+        if lowered in {
+            "references",
+            "references / source notes",
+            "reference",
+            "ghi chú nguồn",
+        }:
             skip_refs = True
             continue
         if skip_refs:
-            if re.match(r"^[-*]\s*\[\d+\]\s+", line) or re.match(r"^\[\d+\]\s+", line) or line.startswith("- "):
+            if (
+                re.match(r"^[-*]\s*\[\d+\]\s+", line)
+                or re.match(r"^\[\d+\]\s+", line)
+                or line.startswith("- ")
+            ):
                 continue
             skip_refs = False
         cleaned_lines.append(raw_line)
@@ -45,7 +56,9 @@ def _strip_source_reference_lines(text: str) -> str:
 
 
 def _dedupe_paragraphs(text: str) -> str:
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", (text or "").strip()) if p.strip()]
+    paragraphs = [
+        p.strip() for p in re.split(r"\n\s*\n", (text or "").strip()) if p.strip()
+    ]
     deduped: list[str] = []
     seen: set[str] = set()
     for paragraph in paragraphs:
@@ -199,8 +212,12 @@ def generate_pdf_report_from_index(
         else "Chỉ liệt kê các hạn chế hoặc thông tin còn thiếu của báo cáo."
     )
 
-    raw_synthesis = _strip_source_reference_lines(str(query_func(synthesis_q, doc_record) or "").strip())
-    raw_limitations = _strip_source_reference_lines(str(query_func(limitation_q, doc_record) or "").strip())
+    raw_synthesis = _strip_source_reference_lines(
+        str(query_func(synthesis_q, doc_record) or "").strip()
+    )
+    raw_limitations = _strip_source_reference_lines(
+        str(query_func(limitation_q, doc_record) or "").strip()
+    )
     combined = _dedupe_paragraphs(raw_synthesis)
 
     summary = _summary_from_text(combined, max_sentences=3 if image_mode else 4)
@@ -215,9 +232,15 @@ def generate_pdf_report_from_index(
             else "Phân tích hình ảnh có thể chưa khả dụng trong chỉ mục hiện tại."
         )
     if not summary:
-        summary = "No summary generated." if language != "vi" else "Không tạo được tóm tắt."
+        summary = (
+            "No summary generated." if language != "vi" else "Không tạo được tóm tắt."
+        )
     if not details:
-        details = "No additional details generated." if language != "vi" else "Không tạo được chi tiết bổ sung."
+        details = (
+            "No additional details generated."
+            if language != "vi"
+            else "Không tạo được chi tiết bổ sung."
+        )
     if image_mode:
         key_points = ""
 
@@ -225,14 +248,23 @@ def generate_pdf_report_from_index(
         request=req,
         source_file=source_file,
         summary=summary,
-        key_points=key_points or ("No key points generated." if language != "vi" else "Không tạo được điểm chính."),
+        key_points=key_points
+        or (
+            "No key points generated."
+            if language != "vi"
+            else "Không tạo được điểm chính."
+        ),
         details=details,
         limitations=limitations,
         language=language,
         image_mode=image_mode,
     )
 
-    title = "RAG-Anything Generated Report" if language != "vi" else "Báo cáo tạo tự động RAG-Anything"
+    title = (
+        "RAG-Anything Generated Report"
+        if language != "vi"
+        else "Báo cáo tạo tự động RAG-Anything"
+    )
     return export_structured_report_to_pdf(
         report_title=title,
         source_file=source_file,

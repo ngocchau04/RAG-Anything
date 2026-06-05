@@ -366,7 +366,9 @@ def _extract_tables_from_pdf_pdfplumber(
                 page_obj = pdf.pages[i]
                 page_text = (page_obj.extract_text() or "").strip()
                 table_label = ""
-                label_match = re.search(r"\btable\s+(\d+)\b", page_text, flags=re.IGNORECASE)
+                label_match = re.search(
+                    r"\btable\s+(\d+)\b", page_text, flags=re.IGNORECASE
+                )
                 if label_match:
                     table_label = f"Table {label_match.group(1)}"
                 caption_line = ""
@@ -447,10 +449,11 @@ def _extract_equation_blocks_from_text_blocks(text_blocks: List[dict]) -> List[d
                     r"\bFP\b|\bFN\b", next_line, flags=re.IGNORECASE
                 ):
                     equation_text = f"{lhs} = ({rhs}) / ({next_line.strip()})"
-                elif re.search(r"\bTP\b", text, flags=re.IGNORECASE) and re.search(
-                    r"\bTN\b", text, flags=re.IGNORECASE
-                ) and re.search(r"\bFP\b", text, flags=re.IGNORECASE) and re.search(
-                    r"\bFN\b", text, flags=re.IGNORECASE
+                elif (
+                    re.search(r"\bTP\b", text, flags=re.IGNORECASE)
+                    and re.search(r"\bTN\b", text, flags=re.IGNORECASE)
+                    and re.search(r"\bFP\b", text, flags=re.IGNORECASE)
+                    and re.search(r"\bFN\b", text, flags=re.IGNORECASE)
                 ):
                     equation_text = "Accuracy = (TP + TN) / (TP + TN + FP + FN)"
             if len(equation_text) < 20:
@@ -459,7 +462,11 @@ def _extract_equation_blocks_from_text_blocks(text_blocks: List[dict]) -> List[d
                 r"\bTP\b|\bTN\b|\bFP\b|\bFN\b", equation_text, flags=re.IGNORECASE
             ):
                 continue
-            label = "Accuracy" if re.search(r"\baccuracy\b", equation_text, flags=re.IGNORECASE) else "Detected"
+            label = (
+                "Accuracy"
+                if re.search(r"\baccuracy\b", equation_text, flags=re.IGNORECASE)
+                else "Detected"
+            )
             blocks.append(
                 {
                     "type": "text",
@@ -1230,7 +1237,9 @@ async def process_with_rag(
                 )
                 combined_content.extend(table_blocks)
                 # Dò thêm các dòng nghi là công thức để tăng khả năng query theo equation.
-                equation_blocks = _extract_equation_blocks_from_text_blocks(fast_content)
+                equation_blocks = _extract_equation_blocks_from_text_blocks(
+                    fast_content
+                )
                 combined_content.extend(equation_blocks)
                 logger.info(
                     "PDF equation extraction from text layer: %s blocks",
@@ -1603,7 +1612,9 @@ async def process_with_rag(
             if raise_on_failure:
                 if last_error is not None:
                     raise RuntimeError(str(last_error)) from last_error
-                raise RuntimeError("Document processing failed without explicit exception.")
+                raise RuntimeError(
+                    "Document processing failed without explicit exception."
+                )
             return
 
         if skip_query:

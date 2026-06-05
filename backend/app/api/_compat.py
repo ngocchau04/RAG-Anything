@@ -4,6 +4,7 @@ try:
     from fastapi import APIRouter, FastAPI, File, Form, UploadFile
     from fastapi.responses import JSONResponse
 except Exception:  # pragma: no cover
+
     class _StubRouter:
         def __init__(self, *args, **kwargs):
             self.routes = []
@@ -14,7 +15,8 @@ except Exception:  # pragma: no cover
                     "path": path,
                     "endpoint": endpoint,
                     "methods": methods or [],
-                    "name": kwargs.get("name") or getattr(endpoint, "__name__", "route"),
+                    "name": kwargs.get("name")
+                    or getattr(endpoint, "__name__", "route"),
                 }
             )
 

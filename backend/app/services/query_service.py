@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Optional
@@ -82,7 +81,9 @@ def is_marker_only_answer(text: str) -> bool:
     lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
     if not lines:
         return False
-    if len(lines) == 1 and re.match(r"^\[PDF (Equation|Table|Visual Description)\b.*\]$", lines[0]):
+    if len(lines) == 1 and re.match(
+        r"^\[PDF (Equation|Table|Visual Description)\b.*\]$", lines[0]
+    ):
         return True
     return False
 
@@ -135,17 +136,35 @@ class QueryServiceMixin:
             wants_accuracy = "accuracy" in q
             wants_roc = "roc" in q
             table_num_match = re.search(r"\btable\s*(\d+)\b", q)
-            wanted_table_num = int(table_num_match.group(1)) if table_num_match else None
+            wanted_table_num = (
+                int(table_num_match.group(1)) if table_num_match else None
+            )
             terms = [
                 t
                 for t in re.findall(r"[a-zA-Z0-9_.+-]+", q)
-                if t not in {"in", "the", "what", "are", "for", "at", "from", "table", "answer", "only"}
+                if t
+                not in {
+                    "in",
+                    "the",
+                    "what",
+                    "are",
+                    "for",
+                    "at",
+                    "from",
+                    "table",
+                    "answer",
+                    "only",
+                }
             ]
             scored_chunks: list[tuple[int, str]] = []
             for chunk in chunks:
                 score = 0
                 if wanted_table_num is not None:
-                    m = re.search(r"\[PDF Table\s*\|\s*label=Table\s+(\d+)\s*\|", chunk, flags=re.IGNORECASE)
+                    m = re.search(
+                        r"\[PDF Table\s*\|\s*label=Table\s+(\d+)\s*\|",
+                        chunk,
+                        flags=re.IGNORECASE,
+                    )
                     if m and int(m.group(1)) == wanted_table_num:
                         score += 1000
                 if "references" in chunk.lower() or "subset 1" in chunk.lower():
@@ -155,7 +174,9 @@ class QueryServiceMixin:
             scored_chunks.sort(key=lambda x: x[0], reverse=True)
             for _, chunk in scored_chunks:
                 lines = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
-                table_lines = [ln for ln in lines if ln.startswith("|") and ln.endswith("|")]
+                table_lines = [
+                    ln for ln in lines if ln.startswith("|") and ln.endswith("|")
+                ]
                 if not table_lines:
                     continue
                 parsed_rows = []
@@ -166,7 +187,9 @@ class QueryServiceMixin:
                 if len(parsed_rows) >= 3:
                     header = parsed_rows[0]
                     body_rows = [
-                        r for r in parsed_rows[2:] if not all(re.fullmatch(r"-+", c or "") for c in r)
+                        r
+                        for r in parsed_rows[2:]
+                        if not all(re.fullmatch(r"-+", c or "") for c in r)
                     ]
                     best_cells: Optional[list[str]] = None
                     best_score = -1
@@ -177,12 +200,18 @@ class QueryServiceMixin:
                             best_score = score
                             best_cells = cells
                     if best_cells is not None and best_score > 0:
-                        col_map = {h.strip().lower(): i for i, h in enumerate(header) if h.strip()}
+                        col_map = {
+                            h.strip().lower(): i
+                            for i, h in enumerate(header)
+                            if h.strip()
+                        }
                         out_parts: list[str] = []
                         if wants_accuracy:
                             for k in ["accuracy", "acc"]:
                                 if k in col_map and col_map[k] < len(best_cells):
-                                    out_parts.append(f"Accuracy: {best_cells[col_map[k]]}")
+                                    out_parts.append(
+                                        f"Accuracy: {best_cells[col_map[k]]}"
+                                    )
                                     break
                         if wants_roc:
                             for k in ["roc", "auc", "roc-auc"]:
@@ -247,7 +276,10 @@ class QueryServiceMixin:
 
         if len(docs) == 1:
             return docs, None
-        return [], "I found multiple indexed files. Which file would you like to ask about?"
+        return (
+            [],
+            "I found multiple indexed files. Which file would you like to ask about?",
+        )
 
     async def load_rag_for_existing_index(self, rec: DocumentRecord):
         ok, reason = self._record_index_status(rec)
@@ -263,7 +295,11 @@ class QueryServiceMixin:
             )
         working_dir = str(self._resolve_record_working_dir(rec))
         if rec.doc_id not in self.rag_cache:
-            preferred = rec.parser if rec.parser in SUPPORTED_QUERY_LOAD_PARSERS else "paddleocr"
+            preferred = (
+                rec.parser
+                if rec.parser in SUPPORTED_QUERY_LOAD_PARSERS
+                else "paddleocr"
+            )
             parser_for_load = self._resolve_query_parser(preferred)
             logger.info(
                 "Query-only mode: loading existing index for %s from %s",
@@ -279,8 +315,7 @@ class QueryServiceMixin:
             if not init_result or not init_result.get("success"):
                 detail = (init_result or {}).get("error", "unknown error")
                 raise RuntimeError(
-                    f"LightRAG init failed for "
-                    f"{rec.original_filename}: {detail}"
+                    f"LightRAG init failed for " f"{rec.original_filename}: {detail}"
                 )
             self.rag_cache[rec.doc_id] = rag
         return self.rag_cache[rec.doc_id]
@@ -322,22 +357,18 @@ class QueryServiceMixin:
             answer = str(result) if result is not None else "No answer was returned."
             if special_kind and marker_chunks:
                 lowered = answer.lower()
-                looks_bad_table = (
-                    special_kind == "table"
-                    and (
-                        "references" in lowered
-                        or "subset 1" in lowered
-                        or "[pdf table" in lowered
-                    )
+                looks_bad_table = special_kind == "table" and (
+                    "references" in lowered
+                    or "subset 1" in lowered
+                    or "[pdf table" in lowered
                 )
-                looks_bad_equation = (
-                    special_kind == "equation"
-                    and (
-                        "[pdf equation" in lowered
-                        or ("accuracy" in lowered and ("tp + tn + fp + fn" not in lowered))
-                    )
+                looks_bad_equation = special_kind == "equation" and (
+                    "[pdf equation" in lowered
+                    or ("accuracy" in lowered and ("tp + tn + fp + fn" not in lowered))
                 )
-                looks_bad_figure = special_kind == "figure" and "[pdf visual description" in lowered
+                looks_bad_figure = (
+                    special_kind == "figure" and "[pdf visual description" in lowered
+                )
                 if looks_bad_table or looks_bad_equation or looks_bad_figure:
                     marker_answer = self._format_marker_answer(
                         special_kind, marker_chunks, question
@@ -403,7 +434,11 @@ class QueryServiceMixin:
         if len(routed_docs) == 1:
             rec = routed_docs[0]
             try:
-                source_prefix = "Answer based on selected file" if selected_doc_id else "Answer based on"
+                source_prefix = (
+                    "Answer based on selected file"
+                    if selected_doc_id
+                    else "Answer based on"
+                )
                 answer = await self.query_existing_document(
                     question,
                     rec,

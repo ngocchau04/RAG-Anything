@@ -392,9 +392,7 @@ class QueryMixin:
         raw_prompt = await self.lightrag.aquery(query, param=query_param)
 
         self.logger.debug("Retrieved raw prompt from LightRAG")
-        indexed_visual_desc_count = str(raw_prompt).count(
-            "[PDF Visual Description |"
-        )
+        indexed_visual_desc_count = str(raw_prompt).count("[PDF Visual Description |")
         if indexed_visual_desc_count > 0:
             self.logger.info(
                 "Retrieved indexed visual descriptions: %s",
