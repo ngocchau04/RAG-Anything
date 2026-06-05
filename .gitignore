@@ -20,6 +20,9 @@ venv/
 dist/
 build/
 site/
+node_modules/
+frontend/app/node_modules/
+frontend/app/dist/
 
 # Logs / Reports
 *.log
