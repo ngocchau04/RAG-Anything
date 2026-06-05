@@ -40,6 +40,9 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=".env", override=False)
 
 
+# =========================
+# Logging / environment bootstrap
+# =========================
 def configure_logging():
     """Configure logging for the application"""
     log_dir = os.getenv("LOG_DIR", os.getcwd())
@@ -90,6 +93,10 @@ def configure_logging():
     set_verbose_debug(os.getenv("VERBOSE", "false").lower() == "true")
 
 
+# =========================
+# Error classification helpers
+# Dùng để quyết định retry, fallback parser, hoặc dừng sớm.
+# =========================
 def _is_windows_winerror5(exc: Exception) -> bool:
     msg = str(exc)
     return "WinError 5" in msg or "PermissionError: [WinError 5]" in msg
@@ -125,6 +132,10 @@ def _is_index_ready(working_dir: str) -> bool:
     return any(p.exists() and p.stat().st_size > 0 for p in expected)
 
 
+# =========================
+# Input-type / provider detection helpers
+# Xác định file đầu vào là ảnh hay PDF, và có provider vision hay không.
+# =========================
 def _is_image_file(path: str) -> bool:
     return Path(path).suffix.lower() in {
         ".jpg",
@@ -165,6 +176,10 @@ def _is_pdf_file(path: str) -> bool:
     return Path(path).suffix.lower() == ".pdf"
 
 
+# =========================
+# PDF page selection helpers
+# Parse tham số CLI như 1-3 hoặc 3,5,7-13 thành page index.
+# =========================
 def _parse_page_range(page_range: Optional[str]) -> tuple[Optional[int], Optional[int]]:
     if not page_range:
         return None, None
@@ -211,6 +226,10 @@ def _parse_page_selection(
     return ordered
 
 
+# =========================
+# Vision targeting helpers
+# Dò xem text layer của PDF có nhắc tới Figure/Table nào để chọn trang render.
+# =========================
 def _build_vision_target_patterns(vision_target: str) -> List[str]:
     import re
 
@@ -252,6 +271,10 @@ def _resolve_vision_target_page_from_text_blocks(
     return None
 
 
+# =========================
+# PDF fast / hybrid extraction helpers
+# Các hàm này trích text, bảng, công thức và render trang PDF thành ảnh.
+# =========================
 def _extract_text_from_pdf_fast(
     pdf_path: str,
     max_pages: Optional[int] = None,
@@ -452,6 +475,7 @@ def _extract_equation_blocks_from_text_blocks(text_blocks: List[dict]) -> List[d
     return blocks
 
 
+# Render trang PDF sang ảnh PNG để vision model mô tả nội dung hình/biểu đồ.
 def _render_pdf_pages_for_vision(
     pdf_path: str,
     tmp_dir: str,
@@ -493,6 +517,10 @@ def _render_pdf_pages_for_vision(
     return image_items
 
 
+# =========================
+# Vision / OCR helpers
+# Dùng để mô tả ảnh bằng model vision hoặc fallback sang OCR.
+# =========================
 async def _ensure_ollama_model_available(host: str, model: str) -> None:
     import aiohttp
 
@@ -678,7 +706,15 @@ async def process_with_rag(
     skip_kg_extraction: bool = False,
     raise_on_failure: bool = False,
 ):
+    # Hàm trung tâm của file:
+    # 1) Chuẩn hóa config đầu vào
+    # 2) Khởi tạo LLM / vision / embedding
+    # 3) Chọn nhánh xử lý phù hợp theo loại tài liệu
+    # 4) Ingest + index vào RAGAnything / LightRAG
+    # 5) Chạy query mẫu hoặc query từ CLI
     try:
+        # Chuẩn hóa alias parser để người dùng có thể gọi "pdf_hybrid"
+        # nhưng nội bộ vẫn đi qua parser "pdf_fast" + pdf_mode="hybrid".
         parser_input = (parser or "mineru").strip().lower()
         parser_alias_pdf_hybrid = parser_input == "pdf_hybrid"
         if parser_alias_pdf_hybrid:
@@ -706,6 +742,9 @@ async def process_with_rag(
         llm_provider = _detect_provider_name(base_url)
         vision_provider = llm_provider
 
+        # Hàm wrapper cho text LLM.
+        # Nhiệm vụ: chuẩn hóa message format, gọi OpenAI-compatible API,
+        # và retry khi gặp timeout / connection / rate limit tạm thời.
         async def llm_model_func(
             prompt, system_prompt=None, history_messages=[], **kwargs
         ):
@@ -792,6 +831,9 @@ async def process_with_rag(
                 raise last_exc
             raise RuntimeError("LLM call failed without explicit exception.")
 
+        # Hàm wrapper cho model vision.
+        # Nếu có image_data thì gửi multimodal request, nếu không thì fallback
+        # sang text LLM để cùng một interface có thể dùng ở nhiều nơi.
         def vision_model_func(
             prompt,
             system_prompt=None,
@@ -843,12 +885,15 @@ async def process_with_rag(
             else:
                 return llm_model_func(prompt, system_prompt, history_messages, **kwargs)
 
+        # Đọc runtime config cho embedding và chọn provider tương ứng
+        # (ví dụ: ollama / gemini / openai-compatible).
         embedding_cfg = resolve_embedding_runtime_config(default_provider="openai")
         embedding_provider = embedding_cfg.provider
         embedding_dim = embedding_cfg.dim
         embedding_model = embedding_cfg.model
         ollama_host = embedding_cfg.ollama_host
 
+        # Embedding path cho Gemini/OpenAI-compatible với retry/backoff.
         async def gemini_embed_with_backoff(texts, model, api_key, base_url):
             attempts = max(0, int(embedding_max_retries)) + 1
             delay = max(0.0, float(embedding_backoff_base_sec))
@@ -927,6 +972,7 @@ async def process_with_rag(
                 raise last_exc
             raise RuntimeError("Embedding failed without explicit exception.")
 
+        # Embedding path cho Ollama local model.
         async def ollama_embed_with_backoff(texts, model, host, target_dim):
             import aiohttp
 
@@ -978,6 +1024,7 @@ async def process_with_rag(
                 raise last_exc
             raise RuntimeError("Ollama embedding failed without explicit exception.")
 
+        # Chọn hàm embedding thực tế theo provider đã resolve từ config/env.
         if embedding_provider == "ollama":
             if not embedding_model:
                 raise RuntimeError(
@@ -1039,6 +1086,7 @@ async def process_with_rag(
                 "Supported: ollama, gemini, openai."
             )
 
+        # Chuẩn bị metadata đầu vào và quyết định parser/fallback order.
         logger.info("LLM provider: %s", llm_provider)
         logger.info("LLM model: %s", llm_model)
         logger.info("Vision provider: %s", vision_provider)
@@ -1103,6 +1151,9 @@ async def process_with_rag(
         last_error = None
 
         pdf_mode_normalized = (pdf_mode or "auto").lower()
+        # Nhánh tối ưu cho PDF:
+        # - fast: lấy text layer nhanh
+        # - hybrid: text + table + equation + optional vision trên trang render
         use_pdf_fast = is_pdf_input and (
             primary_parser == "pdf_fast" or pdf_mode_normalized == "fast"
         )
@@ -1116,6 +1167,8 @@ async def process_with_rag(
             )
 
         if use_pdf_fast or use_pdf_hybrid:
+            # Với fast/hybrid, script tự trích xuất content rồi đưa thẳng vào RAG,
+            # không đi qua process_document_complete của parser truyền thống.
             t_init = perf_counter()
             config = RAGAnythingConfig(
                 working_dir=abs_working_dir,
@@ -1176,6 +1229,7 @@ async def process_with_rag(
                     perf_counter() - t_table,
                 )
                 combined_content.extend(table_blocks)
+                # Dò thêm các dòng nghi là công thức để tăng khả năng query theo equation.
                 equation_blocks = _extract_equation_blocks_from_text_blocks(fast_content)
                 combined_content.extend(equation_blocks)
                 logger.info(
@@ -1186,6 +1240,8 @@ async def process_with_rag(
                 if (not no_vision) and _has_vision_provider(
                     api_key=api_key, base_url=base_url
                 ):
+                    # Ở hybrid mode, có thể render một số trang sang ảnh để vision model
+                    # mô tả biểu đồ / figure mà text layer không diễn đạt tốt.
                     t_render = perf_counter()
                     render_dir = str(
                         Path(abs_tmp_dir) / "pdf_hybrid" / Path(abs_file_path).stem
@@ -1240,6 +1296,8 @@ async def process_with_rag(
                             img_path = item.get("img_path")
                             page_idx = int(item.get("page_idx", 0))
                             try:
+                                # Gọi vision model để biến nội dung ảnh trang PDF thành text block,
+                                # sau đó text này cũng được index như các block khác.
                                 desc = await _describe_image_with_vision(
                                     image_path=img_path,
                                     prompt="Describe key visual elements, tables/charts if visible, and equations if any.",
@@ -1287,6 +1345,8 @@ async def process_with_rag(
                         "Vision provider not available; skipped PDF page visual descriptions."
                     )
 
+            # Gộp toàn bộ nội dung đã bóc tách về cùng một list block
+            # rồi log thống kê trước khi insert vào vector/KG store.
             type_counts: dict[str, int] = {}
             marker_counts = {
                 "table_blocks": 0,
@@ -1322,6 +1382,9 @@ async def process_with_rag(
             parse_success = True
 
         if is_image_input:
+            # Nhánh ảnh đơn:
+            # - ưu tiên vision model để giữ ngữ nghĩa hình ảnh
+            # - nếu không có vision hoặc vision fail thì fallback OCR text
             parser_name = (
                 primary_parser
                 if primary_parser in {"paddleocr", "docling"}
@@ -1369,6 +1432,7 @@ async def process_with_rag(
                     used_parser = f"{parser_name}-vision"
                     parse_success = True
                 else:
+                    # Không có vision model: chỉ lấy text OCR từ ảnh rồi index như tài liệu text.
                     ocr_text = _extract_text_from_image_with_paddleocr(abs_file_path)
                     if not ocr_text:
                         err = RuntimeError(
@@ -1389,6 +1453,7 @@ async def process_with_rag(
                     str(image_exc),
                 )
                 try:
+                    # Vision thất bại thì quay về OCR để vẫn có dữ liệu tối thiểu cho RAG.
                     ocr_text = _extract_text_from_image_with_paddleocr(abs_file_path)
                     if not ocr_text:
                         err = RuntimeError(
@@ -1405,6 +1470,8 @@ async def process_with_rag(
                 except Exception as ocr_exc:
                     last_error = ocr_exc
 
+        # Nhánh parser tổng quát cho DOCX/PDF/ảnh khi không dùng fast/hybrid path.
+        # Script sẽ thử parser chính trước, sau đó fallback lần lượt nếu được bật.
         for parser_name in parser_order:
             if parse_success:
                 break
@@ -1456,14 +1523,17 @@ async def process_with_rag(
                     parser_name == "simple_docx"
                     and Path(abs_file_path).suffix.lower() == ".docx"
                 ):
+                    # Tùy chọn cắt bớt DOCX chỉ áp dụng cho parser simple_docx.
                     parser_kwargs["max_chars"] = max_chars
                     parser_kwargs["max_paragraphs"] = max_paragraphs
                 t_parse = perf_counter()
+                # Gọi pipeline parse + ingest + index đầy đủ của RAGAnything.
                 await rag.process_document_complete(**parser_kwargs)
                 logger.info(
                     "Document parse/index duration: %.2fs", perf_counter() - t_parse
                 )
 
+                # Hậu kiểm: index phải được tạo và doc status không bị fail.
                 if not _is_index_ready(abs_working_dir):
                     raise RuntimeError(
                         "Index artifacts were not created in working_dir. "
@@ -1517,6 +1587,7 @@ async def process_with_rag(
                 break
 
         if not parse_success or rag is None:
+            # Tất cả nhánh ingest đều thất bại thì dừng tại đây.
             if cli_queries:
                 logger.error("Document processing failed, cannot answer user query")
             else:
@@ -1536,6 +1607,7 @@ async def process_with_rag(
             return
 
         if skip_query:
+            # Chế độ chỉ ingest/index, không hỏi đáp.
             logger.info(
                 "Skip query enabled. Ingest/index completed, query step skipped."
             )
@@ -1555,6 +1627,7 @@ async def process_with_rag(
                 "So sánh phạm vi điều chỉnh của Bộ luật Lao động 2012 và Bộ luật Lao động 2019.",
             ]
 
+        # Sau khi đã index xong, chạy lần lượt từng câu hỏi ở chế độ hybrid retrieval.
         for query in text_queries:
             t_query = perf_counter()
             logger.info("\n[Text Query]: %s", query)
@@ -1585,6 +1658,10 @@ async def process_with_rag(
         logger.error(traceback.format_exc())
 
 
+# =========================
+# CLI entrypoint
+# Gom toàn bộ tham số runtime rồi chuyển vào process_with_rag().
+# =========================
 def main():
     parser = argparse.ArgumentParser(description="MinerU RAG Example")
     parser.add_argument("file_path", help="Path to the document to process")

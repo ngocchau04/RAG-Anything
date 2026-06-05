@@ -72,6 +72,26 @@ docker-compose.yml
     └── pulls embedding model on startup
 ```
 
+Incremental migration architecture:
+
+```text
+frontend/app/
+  └── future React/Vite UI scaffold
+backend/app/main.py
+  └── future FastAPI entrypoint skeleton
+examples/webui_gradio.py
+  └── current active UI
+examples/legacy/webui_gradio.py
+  └── backup of the Gradio app during migration
+```
+
+At this stage:
+
+* `examples/webui_gradio.py` remains the active UI.
+* `frontend/app/` is only a minimal scaffold for the future React/Vite frontend.
+* `backend/app/main.py` and `backend/app/api/` provide a FastAPI skeleton for incremental migration.
+* Migration is intentionally gradual; Gradio and the current RAG behavior are not replaced yet.
+
 ## Supported File Types
 
 Current practical support:
@@ -670,6 +690,26 @@ For local development:
 
 ```powershell
 .\.venv\Scripts\python.exe .\examples\webui_gradio.py
+```
+
+Backend API skeleton for local development:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Frontend scaffold for local development:
+
+```powershell
+cd frontend/app
+npm install
+npm run dev
+```
+
+Then open:
+
+```text
+http://localhost:5173
 ```
 
 For Docker deployment:
