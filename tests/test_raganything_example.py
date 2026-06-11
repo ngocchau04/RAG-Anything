@@ -1937,3 +1937,85 @@ def test_ollama_embedding_config_unchanged():
     assert cfg.model == "nomic-embed-local:latest"
     assert cfg.dim == 768
     assert cfg.ollama_host == "http://localhost:11434"
+
+
+@pytest.mark.asyncio
+async def test_example_ollama_helper_accepts_latest_alias(monkeypatch):
+    module = _load_example_module()
+
+    class DummyResponse:
+        status = 200
+
+        async def text(self):
+            return ""
+
+        async def json(self):
+            return {"models": [{"name": "nomic-embed-local:latest"}]}
+
+    class DummyRequestContext:
+        async def __aenter__(self):
+            return DummyResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, *args, **kwargs):
+            return DummyRequestContext()
+
+    dummy_aiohttp = types.SimpleNamespace(ClientSession=lambda: DummySession())
+    monkeypatch.setitem(sys.modules, "aiohttp", dummy_aiohttp)
+
+    await module._ensure_ollama_model_available(
+        "http://localhost:11434", "nomic-embed-local"
+    )
+
+
+@pytest.mark.asyncio
+async def test_example_ollama_helper_reports_actionable_error(monkeypatch):
+    module = _load_example_module()
+
+    class DummyResponse:
+        status = 200
+
+        async def text(self):
+            return ""
+
+        async def json(self):
+            return {"models": [{"name": "llama3.2:latest"}]}
+
+    class DummyRequestContext:
+        async def __aenter__(self):
+            return DummyResponse()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, *args, **kwargs):
+            return DummyRequestContext()
+
+    dummy_aiohttp = types.SimpleNamespace(ClientSession=lambda: DummySession())
+    monkeypatch.setitem(sys.modules, "aiohttp", dummy_aiohttp)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await module._ensure_ollama_model_available(
+            "http://localhost:11434", "missing-model"
+        )
+    msg = str(exc_info.value)
+    assert "requested_model=missing-model" in msg
+    assert "available_models=['llama3.2:latest']" in msg
+    assert "ollama_host=http://localhost:11434" in msg
+    assert "nomic-embed-local:latest" in msg

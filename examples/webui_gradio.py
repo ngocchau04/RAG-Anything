@@ -15,12 +15,19 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from lightrag.utils import logger
-from raganything.config import resolve_embedding_runtime_config
+from raganything.config import EmbeddingRuntimeConfig, resolve_embedding_runtime_config
 from raganything.parser import get_parser
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from backend.app.core.config import AppPaths, get_default_paths
+from backend.app.core.config import (
+    AppPaths,
+    DEFAULT_LOCAL_EMBEDDING_DIM,
+    DEFAULT_LOCAL_EMBEDDING_MODEL,
+    DEFAULT_LOCAL_EMBEDDING_PROVIDER,
+    DEFAULT_LOCAL_OLLAMA_HOST,
+    get_default_paths,
+)
 from backend.app.schemas.document import DocumentRecord, UIState
 from backend.app.services.document_service import (
     DocumentServiceMixin,
@@ -30,11 +37,15 @@ from backend.app.services.document_service import (
 from backend.app.services.indexing_service import (
     IndexingServiceMixin,
     detect_parser_for_file as _detect_parser_for_file,
+    llm_call_runtime as _llm_call_runtime,
+    ollama_embed_runtime as _ollama_embed_runtime,
     sha256_file as _sha256_file,
+    vision_call_runtime as _vision_call_runtime,
 )
 from backend.app.services.query_service import (
     QueryServiceMixin,
     append_messages as _append_messages,
+    normalize_to_messages as _normalize_to_messages,
 )
 from backend.app.services.report_service import (
     export_chat_history_action,
@@ -51,6 +62,13 @@ REGISTRY_PATH = _DEFAULT_PATHS.registry_path
 UPLOADS_DIR = _DEFAULT_PATHS.uploads_dir
 DOCS_ROOT = _DEFAULT_PATHS.docs_root
 REPORTS_ROOT = _DEFAULT_PATHS.reports_root
+_LEGACY_COMPAT_EXPORTS = (
+    _append_messages,
+    _llm_call_runtime,
+    _normalize_to_messages,
+    _ollama_embed_runtime,
+    _vision_call_runtime,
+)
 
 
 def _is_gemini_quota_exceeded(exc: Exception) -> bool:
@@ -89,6 +107,29 @@ def detect_parser_for_file(file_path: str) -> str:
     return _detect_parser_for_file(file_path)
 
 
+def _resolve_webui_embedding_config() -> EmbeddingRuntimeConfig:
+    config = resolve_embedding_runtime_config(default_provider="ollama")
+    if config.provider == DEFAULT_LOCAL_EMBEDDING_PROVIDER:
+        return config
+    # Gradio remains the CPU-only fallback UI for this fork, so keep its
+    # embedding path pinned to local Ollama even if the broader process env was
+    # prepared for example-script tests with Gemini/OpenAI embeddings.
+    logger.warning(
+        "WebUI overrides EMBEDDING_PROVIDER=%s to local Ollama defaults for compatibility.",
+        config.provider,
+    )
+    return EmbeddingRuntimeConfig(
+        provider=DEFAULT_LOCAL_EMBEDDING_PROVIDER,
+        model=DEFAULT_LOCAL_EMBEDDING_MODEL,
+        dim=DEFAULT_LOCAL_EMBEDDING_DIM,
+        ollama_host=DEFAULT_LOCAL_OLLAMA_HOST,
+        provider_source="webui:forced_local_default",
+        model_source=f"webui:forced({DEFAULT_LOCAL_EMBEDDING_MODEL})",
+        dim_source=f"webui:forced({DEFAULT_LOCAL_EMBEDDING_DIM})",
+        host_source=f"webui:forced({DEFAULT_LOCAL_OLLAMA_HOST})",
+    )
+
+
 class WebUIRAGService(DocumentServiceMixin, QueryServiceMixin, IndexingServiceMixin):
     def __init__(self):
         self.state = UIState()
@@ -104,7 +145,7 @@ class WebUIRAGService(DocumentServiceMixin, QueryServiceMixin, IndexingServiceMi
             self.registry_store.save(self.registry)
         self.rag_cache = {}
 
-        embedding_cfg = resolve_embedding_runtime_config(default_provider="ollama")
+        embedding_cfg = _resolve_webui_embedding_config()
         self.embedding_provider = embedding_cfg.provider
         self.embedding_model = embedding_cfg.model
         self.embedding_dim = embedding_cfg.dim

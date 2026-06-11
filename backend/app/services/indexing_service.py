@@ -18,7 +18,17 @@ from openai import AsyncOpenAI
 
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.config import resolve_embedding_runtime_config
+from raganything.runtime.ollama_models import (
+    build_ollama_embedding_diagnostic,
+    normalize_ollama_host,
+    resolve_ollama_embedding_model_name as _resolve_ollama_embedding_model_name,
+)
 
+from backend.app.core.config import (
+    DEFAULT_LOCAL_EMBEDDING_BINDING,
+    DEFAULT_LOCAL_EMBEDDING_MODEL,
+    DEFAULT_LOCAL_EMBEDDING_PROVIDER,
+)
 from backend.app.schemas.document import UIState
 from backend.app.schemas.document import DocumentRecord
 from backend.app.services.document_service import (
@@ -107,6 +117,22 @@ def read_doc_status_error(working_dir: str, filename: str) -> Optional[str]:
                 str(item.get("error_msg", "") or "").strip() or "document status failed"
             )
     return None
+
+
+def resolve_ollama_embedding_model_name(
+    requested_model: str, available_models: list[str]
+) -> Optional[str]:
+    # Re-export the shared resolver here so older imports and tests keep using
+    # the backend service module as their stable integration surface.
+    return _resolve_ollama_embedding_model_name(requested_model, available_models)
+
+
+class OllamaEmbeddingRuntimeError(RuntimeError):
+    """Structured runtime error so API routes can expose actionable Ollama details."""
+
+    def __init__(self, message: str, *, details: dict[str, Any]):
+        super().__init__(message)
+        self.details = details
 
 
 async def ollama_embed_runtime(texts, *, model: str, host: str, target_dim: int):
@@ -320,8 +346,8 @@ class IndexingServiceMixin:
     @contextmanager
     def _patched_env_for_ingest(self):
         keys = {
-            "EMBEDDING_PROVIDER": "ollama",
-            "EMBEDDING_BINDING": "ollama",
+            "EMBEDDING_PROVIDER": DEFAULT_LOCAL_EMBEDDING_PROVIDER,
+            "EMBEDDING_BINDING": DEFAULT_LOCAL_EMBEDDING_BINDING,
             "EMBEDDING_MODEL": self.embedding_model,
             "EMBEDDING_DIM": str(self.embedding_dim),
             "OLLAMA_HOST": self.ollama_host,
@@ -338,12 +364,10 @@ class IndexingServiceMixin:
                 else:
                     os.environ[k] = old_v
 
-    async def _ensure_ollama_model_available(self) -> None:
+    async def _fetch_ollama_model_names(self) -> list[str]:
         import aiohttp
 
-        if self.embedding_provider != "ollama":
-            return
-        url = f"{self.ollama_host.rstrip('/')}/api/tags"
+        url = f"{normalize_ollama_host(self.ollama_host)}/api/tags"
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=20) as resp:
                 if resp.status != 200:
@@ -351,18 +375,77 @@ class IndexingServiceMixin:
                         f"Ollama host check failed ({resp.status}) at {url}"
                     )
                 data = await resp.json()
-        names = [
+        return [
             m.get("name", "") for m in data.get("models", []) if isinstance(m, dict)
         ]
-        aliases = {n for n in names}
-        aliases.update({n.split(":")[0] for n in names})
-        if self.embedding_model not in aliases:
-            raise RuntimeError(
-                "Ollama model not found. Run ollama list or set EMBEDDING_MODEL to an existing model."
+
+    async def get_ollama_runtime_diagnostic(self) -> dict[str, Any]:
+        # This helper is reused by `/chat` failures and `/health/runtime` so
+        # backend and legacy code expose the same actionable Ollama details.
+        requested_model = str(self.embedding_model or "").strip()
+        base_diagnostic = build_ollama_embedding_diagnostic(
+            embedding_provider=self.embedding_provider,
+            requested_model=requested_model,
+            embedding_dim=self.embedding_dim,
+            ollama_host=self.ollama_host,
+            available_models=[],
+            ollama_reachable=False,
+        )
+        if self.embedding_provider != DEFAULT_LOCAL_EMBEDDING_PROVIDER:
+            return base_diagnostic
+        try:
+            available_models = await self._fetch_ollama_model_names()
+        except Exception as exc:
+            return build_ollama_embedding_diagnostic(
+                embedding_provider=self.embedding_provider,
+                requested_model=requested_model,
+                embedding_dim=self.embedding_dim,
+                ollama_host=self.ollama_host,
+                available_models=[],
+                ollama_reachable=False,
+                connection_error=str(exc),
             )
+        return build_ollama_embedding_diagnostic(
+            embedding_provider=self.embedding_provider,
+            requested_model=requested_model,
+            embedding_dim=self.embedding_dim,
+            ollama_host=self.ollama_host,
+            available_models=available_models,
+            ollama_reachable=True,
+        )
+
+    async def _ensure_ollama_model_available(self) -> None:
+        if self.embedding_provider != DEFAULT_LOCAL_EMBEDDING_PROVIDER:
+            raise OllamaEmbeddingRuntimeError(
+                "Local Ollama embedding is required for this fork.",
+                details={
+                    "requested_model": str(self.embedding_model or "").strip(),
+                    "resolved_model": None,
+                    "available_models": [],
+                    "embedding_provider": self.embedding_provider,
+                    "ollama_host": self.ollama_host,
+                    "ollama_reachable": False,
+                    "suggestion": (
+                        "Set EMBEDDING_PROVIDER=ollama, EMBEDDING_BINDING=ollama, and "
+                        f"EMBEDDING_MODEL={DEFAULT_LOCAL_EMBEDDING_MODEL}."
+                    ),
+                },
+            )
+        diagnostic = await self.get_ollama_runtime_diagnostic()
+        if not diagnostic["ollama_reachable"]:
+            raise OllamaEmbeddingRuntimeError(
+                "Ollama host is unreachable.",
+                details=diagnostic,
+            )
+        if not diagnostic["resolved_model"]:
+            raise OllamaEmbeddingRuntimeError(
+                "Ollama embedding model not found.",
+                details=diagnostic,
+            )
+        self.embedding_model = str(diagnostic["resolved_model"])
 
     async def _create_rag(self, working_dir: str, parser: str) -> RAGAnything:
-        if self.embedding_provider != "ollama":
+        if self.embedding_provider != DEFAULT_LOCAL_EMBEDDING_PROVIDER:
             raise RuntimeError(
                 "WebUI defaults to local embeddings only. Set EMBEDDING_PROVIDER=ollama."
             )
@@ -556,6 +639,11 @@ class IndexingServiceMixin:
                     error_message=dep_err,
                 )
                 return f"Indexing failed for {src.name}: {dep_err}"
+
+        # Resolve the Ollama embedding model before invoking the shared example
+        # ingestion path. Otherwise the script can still see the unresolved
+        # config value and fail on `model` vs `model:latest`.
+        await self._ensure_ollama_model_available()
 
         try:
             if file_type == ".docx" and parser_for_run == "simple_docx":
@@ -1041,6 +1129,17 @@ class DocumentLifecycleService(DocumentRegistryService, IndexingServiceMixin):
                 "error": "Indexing failed: registry record missing after processing.",
             }
         if updated.status == "indexed" and self._record_index_status(updated)[0]:
+            # Reprocess can keep the same doc_id/working_dir, so remove only the
+            # per-document LLM response cache file after a successful rebuild.
+            cache_result = self.clear_document_llm_response_cache(
+                self._resolve_record_working_dir(updated)
+            )
+            logger.info(
+                "Index success cache cleanup: doc_id=%s cache_file=%s cache_invalidated=%s",
+                updated.doc_id,
+                cache_result.get("cache_file"),
+                cache_result.get("cache_invalidated"),
+            )
             return {
                 "ok": True,
                 "document": self.serialize_document_result(updated),

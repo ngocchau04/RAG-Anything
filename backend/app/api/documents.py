@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from backend.app.api._compat import APIRouter, File, JSONResponse, UploadFile
 from backend.app.core.config import get_default_paths
+from backend.app.core.runtime import get_backend_async_runtime
 from backend.app.services.document_service import DocumentRegistryService
 from backend.app.services.indexing_service import DocumentLifecycleService
 
@@ -48,7 +48,9 @@ async def upload_document(file: UploadFile = File(None)):
 def index_document(doc_id: str):
     try:
         service = DocumentLifecycleService(get_default_paths())
-        result = asyncio.run(
+        # Use the shared backend loop so index and chat reuse the same LightRAG
+        # async lock context instead of creating a fresh request loop.
+        result = get_backend_async_runtime().run(
             service.index_document_by_id(doc_id, force_reprocess=False)
         )
         if result.get("status_code") == 404:
@@ -70,7 +72,11 @@ def index_document(doc_id: str):
 def reprocess_document(doc_id: str):
     try:
         service = DocumentLifecycleService(get_default_paths())
-        result = asyncio.run(service.index_document_by_id(doc_id, force_reprocess=True))
+        # Reprocess follows the same single-loop rule as indexing to avoid
+        # cross-loop lock reuse inside LightRAG shared storage.
+        result = get_backend_async_runtime().run(
+            service.index_document_by_id(doc_id, force_reprocess=True)
+        )
         if result.get("status_code") == 404:
             return JSONResponse(
                 content={k: v for k, v in result.items() if k != "status_code"},

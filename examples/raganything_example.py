@@ -27,6 +27,11 @@ from lightrag.llm.openai import openai_complete_if_cache
 from lightrag.utils import EmbeddingFunc, logger, set_verbose_debug
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.config import resolve_embedding_runtime_config
+from raganything.runtime.ollama_models import (
+    normalize_ollama_host,
+    resolve_ollama_embedding_model_name,
+)
+from backend.app.core.config import DEFAULT_LOCAL_EMBEDDING_MODEL
 from openai import (
     AsyncOpenAI,
     RateLimitError,
@@ -531,7 +536,10 @@ def _render_pdf_pages_for_vision(
 async def _ensure_ollama_model_available(host: str, model: str) -> None:
     import aiohttp
 
-    url = f"{host.rstrip('/')}/api/tags"
+    # Keep the example path aligned with the FastAPI service path so image/PDF
+    # indexing does not fail on harmless `model` vs `model:latest` differences.
+    normalized_host = normalize_ollama_host(host)
+    url = f"{normalized_host}/api/tags"
     async with aiohttp.ClientSession() as session:
         async with session.get(url, timeout=20) as resp:
             if resp.status != 200:
@@ -542,14 +550,16 @@ async def _ensure_ollama_model_available(host: str, model: str) -> None:
                 )
             data = await resp.json()
     models = [m.get("name", "") for m in data.get("models", []) if isinstance(m, dict)]
-    aliases = set()
-    for m in models:
-        aliases.add(m)
-        aliases.add(m.split(":")[0])
-    if model not in aliases:
+    resolved_model = resolve_ollama_embedding_model_name(model, models)
+    if not resolved_model:
         raise RuntimeError(
-            f"Ollama model '{model}' not found on host {host}. "
-            f"Run: ollama pull {model}"
+            "Ollama embedding model not found. "
+            f"requested_model={model} "
+            f"available_models={models} "
+            f"ollama_host={normalized_host} "
+            "suggestion="
+            f"Run `ollama list` and set EMBEDDING_MODEL to an installed model such as "
+            f"{DEFAULT_LOCAL_EMBEDDING_MODEL}."
         )
 
 

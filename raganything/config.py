@@ -9,6 +9,13 @@ from dataclasses import dataclass, field
 from typing import List
 from lightrag.utils import get_env_value
 
+from backend.app.core.config import (
+    DEFAULT_LOCAL_EMBEDDING_DIM,
+    DEFAULT_LOCAL_EMBEDDING_MODEL,
+    DEFAULT_LOCAL_OLLAMA_HOST,
+    DEFAULT_LOCAL_EMBEDDING_PROVIDER,
+)
+
 
 @dataclass
 class RAGAnythingConfig:
@@ -172,9 +179,9 @@ class EmbeddingRuntimeConfig:
 
 
 def resolve_embedding_runtime_config(
-    env: dict | None = None, default_provider: str = "openai"
+    env: dict | None = None, default_provider: str = DEFAULT_LOCAL_EMBEDDING_PROVIDER
 ) -> EmbeddingRuntimeConfig:
-    """Resolve embedding runtime config with provider-aware defaults."""
+    """Resolve embedding runtime config with local-Ollama defaults for this fork."""
     values = env or os.environ
 
     provider_raw = values.get("EMBEDDING_PROVIDER")
@@ -191,14 +198,16 @@ def resolve_embedding_runtime_config(
     host_raw = values.get("OLLAMA_HOST") or values.get("OLLAMA_BASE_URL")
 
     if provider == "ollama":
-        model = (model_raw or "nomic-embed-local:latest").strip()
+        # This CPU-focused fork keeps local Ollama embeddings as the default and
+        # explicitly avoids drifting into Gemini/OpenAI embedding by omission.
+        model = (model_raw or DEFAULT_LOCAL_EMBEDDING_MODEL).strip()
         if model == "text-embedding-3-large":
             raise RuntimeError(
                 "Embedding provider/model mismatch: Ollama cannot use text-embedding-3-large. "
                 "Set EMBEDDING_MODEL=nomic-embed-local:latest or another model from `ollama list`."
             )
-        dim = int((dim_raw or "768").strip())
-        host = (host_raw or "http://localhost:11434").strip()
+        dim = int((dim_raw or str(DEFAULT_LOCAL_EMBEDDING_DIM)).strip())
+        host = (host_raw or DEFAULT_LOCAL_OLLAMA_HOST).strip()
         return EmbeddingRuntimeConfig(
             provider=provider,
             model=model,
@@ -208,13 +217,17 @@ def resolve_embedding_runtime_config(
             model_source=(
                 "env:EMBEDDING_MODEL"
                 if model_raw
-                else "default:ollama(nomic-embed-local:latest)"
+                else f"default:ollama({DEFAULT_LOCAL_EMBEDDING_MODEL})"
             ),
-            dim_source=("env:EMBEDDING_DIM" if dim_raw else "default:ollama(768)"),
+            dim_source=(
+                "env:EMBEDDING_DIM"
+                if dim_raw
+                else f"default:ollama({DEFAULT_LOCAL_EMBEDDING_DIM})"
+            ),
             host_source=(
                 "env:OLLAMA_HOST/OLLAMA_BASE_URL"
                 if host_raw
-                else "default:ollama(http://localhost:11434)"
+                else f"default:ollama({DEFAULT_LOCAL_OLLAMA_HOST})"
             ),
         )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 try:
     from fastapi import APIRouter, FastAPI, File, Form, UploadFile
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import FileResponse, JSONResponse
 except Exception:  # pragma: no cover
 
     class _StubRouter:
@@ -59,9 +59,27 @@ except Exception:  # pragma: no cover
         def __init__(self, content=None, status_code=200):
             super().__init__(content=content, status_code=status_code)
 
+    class _StubFileResponse(dict):
+        def __init__(
+            self,
+            path="",
+            filename=None,
+            media_type=None,
+            status_code=200,
+            headers=None,
+        ):
+            super().__init__(
+                path=path,
+                filename=filename,
+                media_type=media_type,
+                status_code=status_code,
+                headers=headers or {},
+            )
+
     APIRouter = _StubRouter
     FastAPI = _StubFastAPI
     File = _identity
     Form = _identity
     UploadFile = object
+    FileResponse = _StubFileResponse
     JSONResponse = _StubJSONResponse

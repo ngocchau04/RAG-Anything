@@ -4,6 +4,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+DEFAULT_LOCAL_EMBEDDING_PROVIDER = "ollama"
+DEFAULT_LOCAL_EMBEDDING_BINDING = "ollama"
+DEFAULT_LOCAL_EMBEDDING_MODEL = "nomic-embed-local:latest"
+DEFAULT_LOCAL_EMBEDDING_DIM = 768
+DEFAULT_LOCAL_OLLAMA_HOST = "http://localhost:11434"
+
 
 @dataclass(frozen=True)
 class AppPaths:

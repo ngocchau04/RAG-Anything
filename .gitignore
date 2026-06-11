@@ -23,6 +23,7 @@ site/
 node_modules/
 frontend/app/node_modules/
 frontend/app/dist/
+/package-lock.json
 
 # Logs / Reports
 *.log

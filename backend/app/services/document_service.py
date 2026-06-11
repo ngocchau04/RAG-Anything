@@ -13,6 +13,8 @@ from lightrag.utils import logger
 from backend.app.core.config import SPECIAL_QUERY_MARKERS
 from backend.app.schemas.document import DocumentRecord
 
+LLM_RESPONSE_CACHE_FILENAME = "kv_store_llm_response_cache.json"
+
 
 def is_index_ready(working_dir: str) -> bool:
     wd = Path(working_dir)
@@ -112,7 +114,14 @@ class RegistryStore:
             return []
 
     def save(self, records: list[DocumentRecord]) -> None:
-        payload = [asdict(r) for r in records]
+        payload = []
+        for record in records:
+            item = asdict(record)
+            # Keep runtime-only compatibility aliases out of the persisted
+            # registry so new saves stay on the relative-path schema.
+            item.pop("stored_file_path", None)
+            item.pop("working_dir", None)
+            payload.append(item)
         self.path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -131,6 +140,7 @@ class DocumentServiceMixin:
     @staticmethod
     def serialize_document_record(rec: DocumentRecord) -> dict[str, Any]:
         created_at = str(rec.indexed_at or "").strip() or None
+        available_for_chat = rec.status == "indexed" and not bool(rec.needs_reprocess)
         return {
             "doc_id": rec.doc_id,
             "filename": rec.original_filename,
@@ -144,6 +154,7 @@ class DocumentServiceMixin:
                 rec.error_message
             ),
             "needs_reprocess": bool(rec.needs_reprocess),
+            "available_for_chat": available_for_chat,
         }
 
     def serialize_document_result(self, rec: DocumentRecord) -> dict[str, Any]:
@@ -186,6 +197,42 @@ class DocumentServiceMixin:
     def _resolve_record_working_dir(self, rec: DocumentRecord) -> Path:
         return self._resolve_rel(rec.working_dir_rel)
 
+    def _document_llm_response_cache_path(self, working_dir: str | Path) -> Path:
+        # Keep the cache file name in one place so query retry and reprocess
+        # invalidate the same LightRAG response cache artifact.
+        return Path(working_dir).resolve() / LLM_RESPONSE_CACHE_FILENAME
+
+    def clear_document_llm_response_cache(
+        self, working_dir: str | Path
+    ) -> dict[str, Any]:
+        # Only remove the per-document LLM response cache file. Do not touch
+        # vector/graph/chunk artifacts that define the actual index.
+        cache_path = self._document_llm_response_cache_path(working_dir)
+        result = {
+            "cache_file": str(cache_path),
+            "cache_invalidated": False,
+            "cache_file_existed": cache_path.exists(),
+        }
+        if not cache_path.exists():
+            logger.info(
+                "Document LLM cache invalidate skipped; file not present: %s",
+                cache_path,
+            )
+            return result
+        try:
+            cache_path.unlink()
+            result["cache_invalidated"] = True
+            logger.warning("Document LLM cache invalidated: %s", cache_path)
+            return result
+        except Exception as exc:
+            result["error"] = str(exc)
+            logger.warning(
+                "Document LLM cache invalidate failed: %s error=%s",
+                cache_path,
+                exc,
+            )
+            return result
+
     def _record_index_status(self, rec: DocumentRecord) -> tuple[bool, str]:
         if rec.status != "indexed":
             detail = rec.error_message or rec.needs_reprocess_reason or rec.status
@@ -196,7 +243,8 @@ class DocumentServiceMixin:
         if not rec.working_dir_rel:
             return False, "registry path incompatible: missing working_dir_rel"
         working_dir = self._resolve_record_working_dir(rec)
-        if not is_index_ready(str(working_dir)):
+        index_ready_func = getattr(self, "_is_index_ready", is_index_ready)
+        if not index_ready_func(str(working_dir)):
             return False, f"index path missing: {working_dir}"
         return True, ""
 
