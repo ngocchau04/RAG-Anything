@@ -12,7 +12,6 @@ Mở file `.env` và đảm bảo các biến sau được thiết lập:
 
 ```ini
 # LLM Provider (Sử dụng Gemini)
-LLM_PROVIDER=gemini
 LLM_MODEL=gemini-3.1-flash-lite
 VISION_MODEL=gemini-3.1-flash-lite
 FALLBACK_VISION_MODEL=gemini-2.5-flash-lite
@@ -20,12 +19,13 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 # Embedding Provider (Sử dụng Ollama cục bộ để miễn phí & không giới hạn Quota)
 EMBEDDING_PROVIDER=ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_EMBEDDING_MODEL=nomic-embed-local
+EMBEDDING_BINDING=ollama
+EMBEDDING_MODEL=nomic-embed-local:latest
+OLLAMA_HOST=http://localhost:11434
 EMBEDDING_DIM=768
 ```
 
-*Lưu ý: Bạn phải cài đặt và chạy ứng dụng Ollama trên máy tính với model `nomic-embed-text`.*
+*Lưu ý: Bạn phải cài đặt và chạy ứng dụng Ollama trên máy tính với model `nomic-embed-local:latest`.*
 
 ---
 
@@ -97,7 +97,25 @@ Lúc này, script sẽ tự động chạy qua các câu hỏi mẫu (hardcoded)
 
 - **Lỗi `429 RESOURCE_EXHAUSTED` (Gemini):** Bạn đã dùng hết 20 request/ngày của tài khoản Free. Cách giải quyết là chờ qua ngày, dùng tài khoản trả phí, hoặc chia nhỏ file `.docx` ra.
 - **Lỗi `Docling check_installation failed`:** Thường do bạn chưa cài đủ lệnh PyTorch ở bước 2. Hãy chạy lại lệnh cài đặt PyTorch `--index-url https://download.pytorch.org/whl/cpu`.
-- **Hệ thống bị treo khi gọi Ollama:** Hãy chắc chắn biểu tượng Ollama đang chạy dưới khay hệ thống (System Tray) và bạn đã từng chạy `ollama pull nomic-embed-text` trong terminal.
+- **Hệ thống bị treo khi gọi Ollama:** Hãy chắc chắn biểu tượng Ollama đang chạy dưới khay hệ thống (System Tray) và bạn đã từng chạy `ollama pull nomic-embed-local:latest` trong terminal.
+
+## 9. Chạy React/Vite Frontend Đúng Thư Mục
+
+Frontend React/Vite nằm trong:
+
+```text
+frontend/app
+```
+
+Vì vậy phải chạy `npm` trong đúng thư mục này:
+
+```powershell
+cd D:\TMA\RAG-Anything\frontend\app
+npm install
+npm run dev
+```
+
+Không chạy `npm install` hoặc `npm run dev` ở thư mục gốc `D:\TMA\RAG-Anything`, vì thư mục gốc không có `package.json`.
 
 ---
 

@@ -55,14 +55,21 @@ export default function FileUploader({
   }
 
   return (
-    <section className="panel">
+    <section className="panel panel--compact">
       <h2>Upload</h2>
+      <p className="panel-subtitle">Add a file to the local document registry.</p>
       <input
         ref={inputRef}
         type="file"
         onChange={(event) => setFile(event.target.files?.[0] ?? null)}
       />
-      {file ? <p>Selected file: {file.name}</p> : <p>No file selected.</p>}
+      {file ? (
+        <p className="uploader-file" title={file.name}>
+          Selected: {file.name}
+        </p>
+      ) : (
+        <p className="uploader-empty">No file selected.</p>
+      )}
       <div className="panel-actions">
         <button
           type="button"
@@ -73,7 +80,6 @@ export default function FileUploader({
         </button>
       </div>
       {error ? <p className="panel-error">{error}</p> : null}
-      <p>Current production flow remains in Gradio.</p>
     </section>
   );
 }

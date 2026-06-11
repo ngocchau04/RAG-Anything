@@ -11,6 +11,7 @@ export type DocumentItem = {
   updated_at?: string | null;
   error_message?: string | null;
   needs_reprocess?: boolean;
+  available_for_chat?: boolean;
 };
 
 export type DocumentsResponse = {

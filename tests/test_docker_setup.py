@@ -39,7 +39,7 @@ def test_docker_env_defaults_do_not_use_gemini_embedding():
     )
     assert "EMBEDDING_PROVIDER=ollama" in text
     assert "EMBEDDING_BINDING=ollama" in text
-    assert "EMBEDDING_MODEL=nomic-embed-text" in text
+    assert "EMBEDDING_MODEL=nomic-embed-local:latest" in text
     assert "text-embedding-3-large" not in text
 
 

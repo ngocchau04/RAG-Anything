@@ -20,8 +20,8 @@ Edit `.env.docker` and set your Gemini API key:
 - `LLM_BINDING_API_KEY=...`
 
 Notes:
-- Default Docker embedding model is `nomic-embed-text`.
-- If your local setup uses `nomic-embed-local:latest`, set `EMBEDDING_MODEL` in `.env.docker` accordingly.
+- Default Docker embedding model is `nomic-embed-local:latest`.
+- Keep `EMBEDDING_MODEL=nomic-embed-local:latest` unless your Ollama installation uses a different local alias.
 - Custom/local aliases may not be pullable by `ollama-init`; in that case pull manually.
 
 ## 2. Start Services
@@ -38,7 +38,7 @@ Open:
 If needed, run:
 
 ```bash
-docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull nomic-embed-local:latest
 docker compose exec ollama ollama list
 ```
 

@@ -88,8 +88,8 @@ examples/legacy/webui_gradio.py
 At this stage:
 
 * `examples/webui_gradio.py` remains the active UI.
-* `frontend/app/` is only a minimal scaffold for the future React/Vite frontend.
-* `backend/app/main.py` and `backend/app/api/` provide a FastAPI skeleton for incremental migration.
+* `frontend/app/` now provides a working React/Vite UI for upload, indexing, selection, chat, and PDF report/export actions.
+* `backend/app/main.py` and `backend/app/api/` now provide a working FastAPI layer for the React migration path.
 * Migration is intentionally gradual; Gradio and the current RAG behavior are not replaced yet.
 
 ## Supported File Types
@@ -161,10 +161,10 @@ For Docker Compose:
 ```env
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_BINDING=ollama
-EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_MODEL=nomic-embed-local:latest
 EMBEDDING_DIM=768
 OLLAMA_HOST=http://ollama:11434
-OLLAMA_MODEL_TO_PULL=nomic-embed-text
+OLLAMA_MODEL_TO_PULL=nomic-embed-local:latest
 ```
 
 Do not use Gemini embedding by default in this fork, because Gemini embedding quota can be limited.
@@ -209,13 +209,13 @@ ollama list
 If needed:
 
 ```powershell
-ollama pull nomic-embed-text
+ollama pull nomic-embed-local:latest
 ```
 
 or use your existing local model:
 
 ```powershell
-ollama pull nomic-embed-local
+ollama pull nomic-embed-local:latest
 ```
 
 ### 4. Run WebUI
@@ -274,7 +274,7 @@ docker compose exec ollama ollama list
 If needed:
 
 ```powershell
-docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull nomic-embed-local:latest
 ```
 
 ### 5. Restart WebUI only
@@ -573,7 +573,7 @@ docker compose exec ollama ollama list
 Pull model:
 
 ```powershell
-docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull nomic-embed-local:latest
 ```
 
 ### Gemini API connection error
@@ -695,7 +695,7 @@ For local development:
 Backend API skeleton for local development:
 
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Frontend scaffold for local development:
@@ -705,6 +705,11 @@ cd frontend/app
 npm install
 npm run dev
 ```
+
+Important:
+
+* Run `npm install` and `npm run dev` inside `frontend/app`, not at the repo root.
+* The repo root does not contain a `package.json`, so `npm` commands fail there by design.
 
 Then open:
 
