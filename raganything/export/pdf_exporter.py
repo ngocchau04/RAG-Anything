@@ -74,6 +74,32 @@ def _clean_markdown_text(text: str) -> str:
     return out.strip()
 
 
+def _parse_markdown_sections(content: str) -> list[tuple[str, str]]:
+    sections: list[tuple[str, str]] = []
+    current_heading: Optional[str] = None
+    current_lines: list[str] = []
+    for raw_line in (
+        str(content or "").replace("\r\n", "\n").replace("\r", "\n").splitlines()
+    ):
+        line = raw_line.rstrip()
+        if line.startswith("# "):
+            if current_heading is not None:
+                sections.append((current_heading, "\n".join(current_lines).strip()))
+            current_heading = line[2:].strip()
+            current_lines = []
+            continue
+        if line.startswith("## "):
+            if current_heading is not None:
+                sections.append((current_heading, "\n".join(current_lines).strip()))
+            current_heading = line[3:].strip()
+            current_lines = []
+            continue
+        current_lines.append(line)
+    if current_heading is not None:
+        sections.append((current_heading, "\n".join(current_lines).strip()))
+    return sections
+
+
 def _wrap_text(text: str, max_chars: int = 95) -> list[str]:
     if not text:
         return [""]
@@ -126,7 +152,14 @@ def _render_lines_for_pdf(content: str, max_chars: int = 95) -> list[str]:
     return out_lines
 
 
-def _write_pdf(title: str, sections: list[tuple[str, str]], output_path: Path) -> Path:
+def _write_pdf(
+    title: str,
+    sections: list[tuple[str, str]],
+    output_path: Path,
+    *,
+    title_page_lines: Optional[list[str]] = None,
+    toc_lines: Optional[list[str]] = None,
+) -> Path:
     from reportlab.lib.pagesizes import A4
     from reportlab.pdfgen import canvas
 
@@ -141,9 +174,31 @@ def _write_pdf(title: str, sections: list[tuple[str, str]], output_path: Path) -
         c.showPage()
         y = height - 52
 
-    c.setFont(bold_font, 16)
+    c.setFont(bold_font, 18)
     c.drawString(x, y, title)
-    y -= 24
+    y -= 28
+
+    if title_page_lines:
+        c.setFont(regular_font, 11)
+        for line in title_page_lines:
+            for wrapped in _wrap_text(line, max_chars=90):
+                if y < 70:
+                    new_page()
+                    c.setFont(regular_font, 11)
+                c.drawString(x, y, wrapped)
+                y -= 15
+        new_page()
+        c.setFont(bold_font, 14)
+        c.drawString(x, y, "Table of Contents")
+        y -= 22
+        c.setFont(regular_font, 10)
+        for line in toc_lines or []:
+            if y < 70:
+                new_page()
+                c.setFont(regular_font, 10)
+            c.drawString(x, y, line)
+            y -= 13
+        new_page()
 
     for heading, content in sections:
         if y < 90:
@@ -216,19 +271,37 @@ def export_chat_history_to_pdf(
 def export_structured_report_to_pdf(
     report_title: str,
     source_file: Optional[str],
+    source_doc_id: Optional[str],
     user_request: str,
     report_body: str,
     output_dir: str | Path,
     filename_prefix: str = "rag_report",
+    source_validation_status: Optional[str] = None,
+    sections_generated: Optional[list[str]] = None,
+    report_mode: Optional[str] = None,
+    inferred_report_type: Optional[str] = None,
 ) -> Path:
     out_dir = _ensure_dir(Path(output_dir))
     filename = f"{_safe_stem(filename_prefix)}_{_timestamp()}.pdf"
     output_path = out_dir / filename
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sections = [
-        ("Generated time", now),
-        ("Source file", source_file or "N/A"),
-        ("User report request", user_request or "N/A"),
-        ("Report", report_body or "N/A"),
+    parsed_sections = _parse_markdown_sections(report_body or "")
+    if not parsed_sections:
+        parsed_sections = [("Report", report_body or "N/A")]
+    title_page_lines = [
+        f"Source document: {source_file or 'N/A'}",
+        f"Source document id: {source_doc_id or 'N/A'}",
+        f"Generated time: {now}",
+        f"Report request: {user_request or 'N/A'}",
+        f"Inferred report type: {inferred_report_type or 'custom'}",
+        f"Source validation status: {source_validation_status or 'unknown'}",
+        f"Report mode: {report_mode or 'structured'}",
     ]
-    return _write_pdf(report_title or "RAG-Anything Report", sections, output_path)
+    toc_lines = sections_generated or [heading for heading, _ in parsed_sections]
+    return _write_pdf(
+        report_title or "RAG-Anything Report",
+        parsed_sections,
+        output_path,
+        title_page_lines=title_page_lines,
+        toc_lines=toc_lines,
+    )
